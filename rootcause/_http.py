@@ -233,9 +233,15 @@ class Transport:
         while True:
             attempt += 1
             all_headers = {"Authorization": f"Bearer {self._access_token()}", **(headers or {})}
-            response = self._client.request(
-                method, path, json=json_body, content=content, headers=all_headers, params=params
-            )
+            try:
+                response = self._client.request(
+                    method, path, json=json_body, content=content, headers=all_headers, params=params
+                )
+            except httpx.TransportError:
+                if method == "GET" and attempt < max_attempts:
+                    time.sleep(min(2.0 ** attempt, 20.0))
+                    continue
+                raise
             if response.status_code in RETRYABLE_STATUSES and attempt < max_attempts:
                 retry_after = response.headers.get("Retry-After")
                 delay = float(retry_after) if retry_after and retry_after.isdigit() else min(2.0 ** attempt, 20.0)

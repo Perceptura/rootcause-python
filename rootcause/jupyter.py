@@ -189,10 +189,12 @@ def _widget_class():
             if not isinstance(content, dict) or content.get("kind") != "tools/call":
                 return
             params = content.get("params") or {}
+            arguments = dict(params.get("arguments") or {})
+            original = json.loads(self.tool_arguments or "{}")
+            if "workspaceId" not in arguments and original.get("workspaceId"):
+                arguments["workspaceId"] = original["workspaceId"]
             try:
-                result = self._gateway.call_tool(
-                    str(params.get("name", "")), params.get("arguments") or {}
-                )
+                result = self._gateway.call_tool(str(params.get("name", "")), arguments)
             except RootCauseError as e:
                 result = {"isError": True, "content": [{"type": "text", "text": str(e)}]}
             self.send({"kind": "tools/call:result", "callId": content.get("callId"), "result": result})
