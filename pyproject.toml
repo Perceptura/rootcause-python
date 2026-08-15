@@ -30,6 +30,7 @@ dependencies = [
 
 [project.optional-dependencies]
 graph = ["networkx>=3.0"]
+jupyter = ["anywidget>=0.9"]
 dev = ["pytest>=8.0", "pytest-httpx>=0.30"]
 
 [project.urls]

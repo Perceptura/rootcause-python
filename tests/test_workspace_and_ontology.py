@@ -100,3 +100,13 @@ def test_ontology_ask_sends_prompt(api, transport):
     result = Ontology(transport, "ws1").ask("average revenue in Florida")
     assert api.body_of("POST", "/ontology/query")["prompt"] == "average revenue in Florida"
     assert result.query == {"conceptIds": []}
+
+
+def test_to_frame_drops_parquet_index_artifacts(api, transport):
+    api.on("GET", "/api/v1/workspaces/ws1/ontology/concepts", CONCEPTS)
+    api.on("POST", "/api/v1/workspaces/ws1/ontology/query", {"data": {
+        "rows": [{"revenue": 1, "__index_level_0__": 0}],
+        "nextStartKey": None,
+    }})
+    frame = Ontology(transport, "ws1").query(select=["revenue"]).to_frame()
+    assert list(frame.columns) == ["revenue"]

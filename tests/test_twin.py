@@ -114,3 +114,11 @@ def test_sample_draws_flatten_environments():
     assert list(frame.columns) == ["environment", "y"]
     assert len(frame) == 3
     assert set(frame["environment"]) == {"uk", "fr"}
+
+
+def test_train_on_trained_version_is_idempotent(api, transport, capsys):
+    twin = _twin(transport, "static")
+    result = twin.train()
+    assert result is twin
+    assert not any(r.method == "POST" for r in api.requests)
+    assert "force=True" in capsys.readouterr().err

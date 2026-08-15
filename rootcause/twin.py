@@ -94,7 +94,22 @@ class Twin:
         return self.graph
 
     def train(self, *, timeout: float = 7200.0) -> "Twin":
-        """Train the model for this version, blocking until done."""
+        """Train the model for this version, blocking until done.
+
+        An already-trained version is returned as-is: the platform's lifecycle
+        retrains through a new version, not by re-fitting in place. To rebuild
+        a model from scratch (after an engine fix, or a corrupt artifact), use
+        rc.discover(df, force=True) and train the fresh twin it returns.
+        """
+        import sys as _sys
+
+        if str(self.version.get("lifecycleState", "")) == "trained":
+            print(
+                f'"{self.name}" is already trained; reusing the fitted model. '
+                "Use rc.discover(df, force=True) to rebuild from scratch.",
+                file=_sys.stderr,
+            )
+            return self
         envelope = self._transport.request("POST", f"{self._version_path()}/train")
         job_id = str(envelope["data"]["jobId"])
         poll_job(self._transport, self._workspace_id, job_id, label=f"train {self.name}", timeout=timeout)
@@ -225,6 +240,27 @@ class Twin:
         if not isinstance(scenario, dict):
             raise RootCauseError(f"Could not generate a scenario from that question; response: {data}")
         return self._run_scenario(scenario, timeout=timeout)
+
+    def console(self, *, height: int = 560, theme: str = ""):
+        """The interactive causal-graph console under the cell: the same app Claude renders.
+
+        Explore edges, type intervention values, and re-run scenarios; every
+        control round-trips live through the platform's MCP gateway with this
+        session's credentials. Needs: pip install "rootcause-sdk[jupyter]".
+        """
+        from rootcause.jupyter import app
+
+        return app(
+            "query_causal_graph",
+            {
+                "workspaceId": self._workspace_id,
+                "digitalTwinVersionId": self.version_id,
+                "queryType": "graph",
+            },
+            height=height,
+            theme=theme,
+            transport=self._transport,
+        )
 
     def save(self, path: str | Path, *, include_runs: bool = False, timeout: float = 3600.0) -> Path:
         """Export this twin (trained params included) as a portable .rctwin zip."""

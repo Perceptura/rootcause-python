@@ -44,7 +44,9 @@ class OntologyQueryResult:
             next_key = page.get("nextStartKey")
         if max_rows is not None:
             rows = rows[:max_rows]
-        return pd.DataFrame(rows)
+        frame = pd.DataFrame(rows)
+        artifacts = [column for column in frame.columns if str(column).startswith("__index_level_")]
+        return frame.drop(columns=artifacts)
 
     def __repr__(self) -> str:
         total = self.row_count if self.row_count is not None else f"{len(self.rows)}+"
