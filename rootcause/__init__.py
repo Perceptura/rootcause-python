@@ -104,12 +104,17 @@ def discover(
     entity: str | None = None,
     kind: str | None = None,
     name: str | None = None,
+    force: bool = False,
     timeout: float = 3600.0,
 ) -> Graph:
-    """Causal discovery on a DataFrame. Compute runs on the platform; nothing user-visible persists."""
+    """Causal discovery on a DataFrame. Compute runs on the platform; nothing user-visible persists.
+
+    Identical data reuses the previously discovered twin; force=True re-runs
+    discovery from scratch (the recovery path for corrupt or outdated models).
+    """
     return _direct.discover(
         frame, target=target, time=time, entity=entity, kind=kind, name=name,
-        transport=_transport(), timeout=timeout,
+        force=force, transport=_transport(), timeout=timeout,
     )
 
 

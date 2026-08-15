@@ -141,6 +141,33 @@ def _ensure_view(workspace: Workspace, source_id: str, fingerprint: str, *, wait
         _time.sleep(5.0)
 
 
+def _find_reusable_twin(
+    workspace: Workspace,
+    fingerprint: str,
+    kind: str,
+    time: str | None,
+    entity: str | None,
+) -> Twin | None:
+    tag = f"sdk:{fingerprint}"
+    candidates = [
+        twin for twin in workspace.twins
+        if tag in (twin.doc.get("tags") or []) and twin.kind == kind
+    ]
+    for twin in sorted(candidates, key=lambda t: str(t.doc.get("createdAt", "")), reverse=True):
+        try:
+            version = twin.version
+        except RootCauseError:
+            continue
+        if time is not None and version.get("selectedTimeColumnName") not in (None, time):
+            continue
+        env_columns = version.get("environmentColumns") or twin.doc.get("environmentColumns")
+        if entity is not None and env_columns not in (None, [entity]):
+            continue
+        if version.get("causalGraph") or version.get("lifecycleState") in {"discovered", "trained"}:
+            return twin
+    return None
+
+
 def discover(
     frame: "pd.DataFrame",
     target: str | None = None,
@@ -149,18 +176,36 @@ def discover(
     kind: str | None = None,
     name: str | None = None,
     *,
+    force: bool = False,
     transport: Transport,
     timeout: float = 3600.0,
 ) -> Graph:
     """Causal discovery straight from a DataFrame — no visible workspace ceremony.
 
-    Artifacts live in the hidden ".sdk-scratch" workspace; re-running on the
-    same frame reuses the uploaded data via content hash. The returned Graph's
-    twin carries the requested target as an attribute for downstream defaults.
+    Artifacts live in the hidden ".sdk-scratch" workspace, keyed by a content
+    hash of the frame. Re-running on identical data reuses the existing twin
+    and its discovered graph instead of re-running discovery; calling .train()
+    on the reused graph still retrains, so a rerun picks up engine fixes.
+    force=True ignores the cache and discovers a fresh twin — the recovery
+    path when an old model is corrupt or its discovery predates a fix.
     """
+    import sys as _sys
+
     resolved_kind = infer_kind(time, entity, kind)
     workspace = scratch_workspace(transport)
     fingerprint = frame_fingerprint(frame)
+
+    if not force:
+        existing = _find_reusable_twin(workspace, fingerprint, resolved_kind, time, entity)
+        if existing is not None:
+            existing.requested_target = target
+            print(
+                f'Reusing twin "{existing.name}" already discovered for this exact data; '
+                "pass force=True to re-run discovery from scratch.",
+                file=_sys.stderr,
+            )
+            return existing.graph
+
     source = _ensure_source(workspace, frame, fingerprint)
     view_id = _ensure_view(workspace, source.id, fingerprint)
 
