@@ -75,7 +75,30 @@ def _ensure_source(workspace: Workspace, frame: "pd.DataFrame", fingerprint: str
     return workspace.upload(frame, name)
 
 
-def _ensure_view(workspace: Workspace, source_id: str, fingerprint: str) -> str:
+def _create_view(workspace: Workspace, name: str, sources: list, operations: list) -> str:
+    created = workspace._transport.request(
+        "POST",
+        f"/api/v1/workspaces/{workspace.id}/data-views",
+        json_body={
+            "name": name,
+            "sources": sources,
+            "operations": operations,
+            "description": "rootcause-sdk direct mode view",
+        },
+    )
+    doc = created.get("data", created)
+    return str(doc.get("id") or doc.get("_id"))
+
+
+def _ensure_view(workspace: Workspace, source_id: str, fingerprint: str, *, wait: float = 120.0) -> str:
+    """Resolve a queryable view over the uploaded source.
+
+    A recommended view is preferred (it carries the join graph when one exists),
+    but a lone dataset never gets one, so the fallback is a pass-through view
+    bound to the source's ontology concepts at their current editVersion.
+    """
+    import time as _time
+
     name = f"sdk-view-{fingerprint}"
     existing = workspace.datasets.get(name)
     if existing is not None:
@@ -84,28 +107,38 @@ def _ensure_view(workspace: Workspace, source_id: str, fingerprint: str) -> str:
     envelope = workspace._transport.request(
         "GET", f"/api/v1/workspaces/{workspace.id}/data-views/recommended"
     )
-    recommended = envelope.get("data", envelope)
-    if isinstance(recommended, dict):
-        recommended = recommended.get("views") or recommended.get("recommendations") or []
+    payload = envelope.get("data", envelope)
+    recommended = payload.get("recommendedViews", []) if isinstance(payload, dict) else []
     for view in recommended:
-        sources = view.get("sources", [])
-        source_ids = {source.get("id") for source in sources if isinstance(source, dict)}
-        if source_ids == {source_id}:
-            body = {
-                "name": name,
-                "sources": sources,
-                "operations": view.get("operations", []),
-                "description": "rootcause-sdk direct mode view",
+        if set(view.get("datasetIds", [])) == {source_id}:
+            data_view = view.get("dataView") or {}
+            return _create_view(workspace, name, data_view.get("sources", []), data_view.get("operations", []))
+
+    deadline = _time.monotonic() + wait
+    while True:
+        concepts = workspace.ontology._concepts_raw(refresh=True)
+        mapped = [
+            concept
+            for concept in concepts
+            if any(m.get("datasetId") == source_id for m in concept.get("fieldMappings", []))
+        ]
+        if mapped:
+            concept_ids = [str(c.get("id") or c.get("_id")) for c in mapped]
+            source = {
+                "type": "DATASET",
+                "id": source_id,
+                "conceptIds": concept_ids,
+                "conceptVersions": {
+                    str(c.get("id") or c.get("_id")): int(c.get("editVersion") or 0) for c in mapped
+                },
             }
-            created = workspace._transport.request(
-                "POST", f"/api/v1/workspaces/{workspace.id}/data-views", json_body=body
+            return _create_view(workspace, name, [source], [])
+        if _time.monotonic() > deadline:
+            raise RootCauseError(
+                f"No ontology concepts materialised for the uploaded data within {wait:.0f}s, "
+                "so no view could be built. Retry, or create a data view over the source in the platform."
             )
-            doc = created.get("data", created)
-            return str(doc.get("id") or doc.get("_id"))
-    raise RootCauseError(
-        "No recommended view covered the uploaded data; the ontology may still be processing. "
-        "Retry in a moment, or create a data view over the source in the platform."
-    )
+        _time.sleep(5.0)
 
 
 def discover(

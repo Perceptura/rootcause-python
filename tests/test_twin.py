@@ -56,9 +56,28 @@ def test_intervene_maps_scenario_type_per_kind(api, transport):
         ("multi-environment-temporal", "panel_intervention"),
     ]:
         api.requests.clear()
-        result = _twin(transport, kind).intervene({"x": 1})
+        result = _twin(transport, kind).intervene({"x": 1}, outcomes=["y"])
         assert isinstance(result, SimulationResult)
         assert api.body_of("POST", "/simulations")["scenario"]["type"] == expected
+
+
+def test_intervene_without_metrics_raises_before_any_request(api, transport):
+    twin = _twin(transport, "static")
+    with pytest.raises(RootCauseError, match="metric"):
+        twin.intervene({"x": 1})
+    assert api.requests == []
+
+
+def test_intervene_outcomes_build_mean_metrics(api, transport):
+    api.on("POST", "/api/v1/workspaces/ws1/simulations", {"data": {"runId": "r9"}}, status=202)
+    api.on("GET", "/api/v1/workspaces/ws1/simulations/r9", {"data": {"status": "completed"}})
+
+    _twin(transport, "static").intervene({"x": 1}, outcomes=["revenue"])
+
+    scenario = api.body_of("POST", "/simulations")["scenario"]
+    assert scenario["metrics"] == [
+        {"name": "avg_revenue", "sqlQuery": 'SELECT AVG("revenue") AS value FROM df', "unit": "count", "higherIsBetter": True}
+    ]
 
 
 def test_forecast_rejects_static(transport):
@@ -86,7 +105,7 @@ def test_failed_run_raises(api, transport):
     from rootcause.errors import JobFailedError
 
     with pytest.raises(JobFailedError):
-        _twin(transport, "static").intervene({"x": 1})
+        _twin(transport, "static").intervene({"x": 1}, outcomes=["y"])
 
 
 def test_sample_draws_flatten_environments():

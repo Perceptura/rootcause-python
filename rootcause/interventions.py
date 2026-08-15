@@ -44,6 +44,22 @@ def members(
     return {"type": "set_members", "include": include, "exclude": exclude, "size": size, "replace": replace}
 
 
+def metric(name: str, sql: str, unit: str = "count", higher_is_better: bool = True) -> dict[str, Any]:
+    """A simulation metric: SQL over the sampled frame, registered as df/data/dataset.
+
+    Example: rc.metric("avg_revenue", "SELECT AVG(revenue) AS value FROM df", unit="USD")
+    """
+    return {"name": name, "sqlQuery": sql, "unit": unit, "higherIsBetter": higher_is_better}
+
+
+def mean_metrics(outcomes: list[str]) -> list[dict[str, Any]]:
+    """Mean-of-column metrics for each outcome variable, the common case."""
+    return [
+        metric(f"avg_{column}", f'SELECT AVG("{column}") AS value FROM df')
+        for column in outcomes
+    ]
+
+
 def compile_where(where: Any) -> list[dict[str, Any]]:
     """Compile the friendly where= forms into backend Condition dicts.
 

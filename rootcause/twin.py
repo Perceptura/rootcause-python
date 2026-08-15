@@ -125,7 +125,8 @@ class Twin:
 
         do= applies interventions before sampling; where= scopes them to a
         subpopulation. Panel twins sample each environment independently
-        (environments= narrows which). seed reaches static twins only.
+        (environments= narrows which) and derive stable per-environment child
+        seeds from seed=.
         """
         interventions = compile_do(do, where) if do else []
         if self.is_panel:
@@ -151,11 +152,27 @@ class Twin:
         do: dict[str, Any],
         where: Any = None,
         metrics: list[dict[str, Any]] | None = None,
+        outcomes: list[str] | None = None,
         environments: list[str] | None = None,
         *,
         timeout: float = 3600.0,
     ) -> SimulationResult:
-        """Run an intervention simulation and block for the result."""
+        """Run an intervention simulation and block for the result.
+
+        Interventions measure their effect through metrics: pass metrics=[rc.metric(...)]
+        for full control, or outcomes=["revenue"] for mean-of-column metrics. For raw
+        effect distributions without metrics, use twin.sample(do=...).
+        """
+        if metrics is None:
+            if not outcomes:
+                raise RootCauseError(
+                    "Interventions need at least one metric. Pass outcomes=['revenue'] for "
+                    "mean-of-column metrics, metrics=[rc.metric(...)] for custom SQL, or use "
+                    "twin.sample(do=...) for raw draws."
+                )
+            from rootcause.interventions import mean_metrics
+
+            metrics = mean_metrics(outcomes)
         interventions = compile_do(do, where)
         if self.is_panel:
             scenario: dict[str, Any] = {

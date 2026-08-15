@@ -65,6 +65,7 @@ class _OAuthSession:
             "code_challenge": challenge,
             "code_challenge_method": "S256",
             "state": secrets.token_urlsafe(16),
+            "resource": f"{self.base_url}/api/v1",
         }
         url = f"{self.base_url}/api/oauth/authorize?{urlencode(params)}"
         print(f"Opening browser for RootCause login…\n  {url}", file=sys.stderr)
@@ -80,6 +81,7 @@ class _OAuthSession:
                     "redirect_uri": redirect_uri,
                     "client_id": client_id,
                     "code_verifier": verifier,
+                    "resource": f"{self.base_url}/api/v1",
                 },
             )
         if resp.status_code >= 400:
@@ -102,6 +104,7 @@ class _OAuthSession:
                     "grant_type": "refresh_token",
                     "refresh_token": entry["refresh_token"],
                     "client_id": entry["client_id"],
+                    "resource": f"{self.base_url}/api/v1",
                 },
             )
         if resp.status_code >= 400:

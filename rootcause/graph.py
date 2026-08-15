@@ -106,8 +106,8 @@ class Graph:
         )
         return self.refresh()
 
-    def train(self) -> "Twin":
-        return self._twin.train()
+    def train(self, *, timeout: float = 7200.0) -> "Twin":
+        return self._twin.train(timeout=timeout)
 
     def __repr__(self) -> str:
         payload = self._graph()
