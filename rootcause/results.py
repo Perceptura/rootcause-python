@@ -142,15 +142,25 @@ class SimulationResult:
 class ForecastResult(SimulationResult):
     """Forecast run with a tidy long-format frame: environment, series, timestamp, values."""
 
+    @staticmethod
+    def _env_results(results: Any) -> tuple[dict[str, Any] | None, Any]:
+        if not isinstance(results, dict):
+            return None, None
+        if "environmentResults" in results:
+            return results.get("environmentResults"), results.get("aggregateResult")
+        for value in results.values():
+            if isinstance(value, dict) and "environmentResults" in value:
+                return value.get("environmentResults"), value.get("aggregateResult")
+        return None, None
+
     def to_frame(self, path: str | None = None) -> "pd.DataFrame":
         pd = _pandas()
         if path is not None:
             return super().to_frame(path)
-        results = self.results
-        env_results = results.get("environmentResults") if isinstance(results, dict) else None
+        env_results, aggregate = self._env_results(self.results)
         if isinstance(env_results, dict) and env_results:
             frames = []
-            for env, env_payload in env_results.items():
+            for env, env_payload in [*env_results.items(), *([("aggregate", aggregate)] if aggregate else [])]:
                 records = _walk_records(env_payload)
                 if records:
                     frame = pd.DataFrame(max(records, key=lambda item: len(item[1]))[1])

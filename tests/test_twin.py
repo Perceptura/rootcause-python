@@ -132,3 +132,21 @@ def test_forecast_aggregate_only_for_panel(api, transport):
     api.on("GET", "/api/v1/workspaces/ws1/simulations/r8", {"data": {"status": "completed"}})
     _twin(transport, "multi-environment-temporal").forecast(horizon=6, targets=["y"], aggregate="sum")
     assert api.body_of("POST", "/simulations")["scenario"]["aggregateMode"] == "sum"
+
+
+def test_forecast_frame_unwraps_version_label_and_labels_environments(api, transport):
+    from rootcause.results import ForecastResult
+
+    payload = {"1.0.0": {
+        "environmentResults": {
+            "uk": {"results": {"revenue": [{"timestamp": 1, "prediction": 10.0}]}},
+            "fr": {"results": {"revenue": [{"timestamp": 1, "prediction": 8.0}]}},
+        },
+        "aggregateResult": {"results": {"revenue": [{"timestamp": 1, "prediction": 18.0}]}},
+    }}
+    api.on("GET", "/api/v1/workspaces/ws1/simulations/rf/results", {"data": payload})
+
+    result = ForecastResult(transport, "ws1", "rf", {"status": "completed"})
+    frame = result.to_frame()
+    assert set(frame["environment"]) == {"uk", "fr", "aggregate"}
+    assert len(frame) == 3
