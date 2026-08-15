@@ -1,12 +1,6 @@
 # rootcause-sdk
 
-![RootCause causal discovery](https://rootcause.ai/img/platform/causal-discovery.png)
-
-## About RootCause
-
-[RootCause](https://rootcause.ai) is a causal AI platform: you bring your data, define or discover causal structure, and run what-if analyses and simulations. Build digital twins, explore causal graphs, and query outcomes via the UI or the [Model Context Protocol](https://modelcontextprotocol.io). Full docs: [docs.rootcause.ai](https://docs.rootcause.ai).
-
-This package is the official Python SDK for the RootCause platform API.
+[RootCause](https://rootcause.ai) is a causal AI platform: bring your data, discover causal structure, train digital twins, and ask what-if questions. This is the official Python SDK. Full docs: [docs.rootcause.ai](https://docs.rootcause.ai).
 
 ## Installation
 
@@ -14,76 +8,82 @@ This package is the official Python SDK for the RootCause platform API.
 pip install rootcause-sdk
 ```
 
-## Quick Start
+## Quick start
 
 ```python
-import asyncio
-from rootcause import RootCause
+import rootcause as rc
+import pandas as pd
 
-async def main():
-    async with RootCause(api_key="pk_your_api_key", workspace_id="ws_your_workspace") as rc:
-        # List datasets
-        datasets = await rc.datasets.list()
+rc.login()                                   # ROOTCAUSE_API_KEY, or browser login
 
-        # Get a dataset schema
-        schema = await rc.datasets.schema("dataset_id")
+df = pd.read_csv("lalonde.csv")
 
-        # Run a simulation
-        sim = await rc.simulations.run({
-            "digitalTwinVersionId": "dtv_123",
-            "interventions": {"price": 120},
-        })
+graph = rc.discover(df, target="re78")       # causal discovery on a DataFrame
+graph.pin("treat", "re78")                   # domain knowledge
+twin = graph.train()
 
-asyncio.run(main())
+ate = twin.intervene({"treat": rc.set(1)}, where={"re75": ("<", 5000)})
+ate.summary
 ```
 
-## Features
+Nothing above mentions a workspace: direct mode keeps platform ceremony out of sight and reuses uploads by content hash.
 
-- **Fully async**: built on httpx for high performance
-- **Workspace-scoped**: set a default workspace or pass one per call
-- **Job polling**: built-in helpers for long-running operations
-- **Auto-pagination**: async generators for paginated endpoints
-- **Typed**: full type hints throughout
+## Platform mode
 
-## Configuration
+The same classes work against everything your team builds in the RootCause UI:
 
 ```python
-from rootcause import RootCause, RootCauseConfig
+ws = rc.workspace("Calix Forecasting")
 
-config = RootCauseConfig(
-    api_key="pk_...",
-    base_url="https://platform.rootcause.ai",  # default
-    workspace_id="ws_...",                      # optional default
-    timeout=30.0,                               # seconds
+ws.sources["shipments"].to_frame()           # tab-completes live names
+ws.upload(df, name="shipments-v2")
+
+twin = ws.twin("C8 Temporal")                # trained by a colleague — just there
+fc = twin.forecast(horizon=24)
+fc.to_frame()                                # tidy long format, straight to pandas
+
+twin.ask("what happens to bookings if we cut trade shows entirely?")
+```
+
+## The power-user primitive
+
+Every simulation family is a wrapper over conditional sampling. The SDK exposes it raw:
+
+```python
+draws = twin.sample(n=10_000, do={"price": rc.pct(+10)}, where={"region": "FL"}, seed=42)
+draws.to_frame()                             # one row per joint posterior draw
+```
+
+Interventions: `rc.set(value)`, `rc.pct(+15)`, `rc.add(-5)`, `rc.prob("yes", 0.8)`, `rc.adjust_prob("yes", +10)`, `rc.members(include=[...], size=4)`. Bare values mean `rc.set`. Conditions: `{"region": "EMEA"}` or `{"re75": ("<", 5000)}`.
+
+## Ontology queries
+
+```python
+onto = ws.ontology
+onto.concepts
+
+result = onto.query(
+    select=["customer", "revenue"],
+    where=[("region", "==", "US")],
+    group_by=["customer"],
+    order_by="-revenue",
+    aggregate={"revenue": "sum"},
 )
-rc = RootCause(config)
+result.to_frame()
+
+onto.ask("average revenue per customer in Florida last quarter")
 ```
 
-## Job Polling
+## Portable twins
 
 ```python
-from rootcause import RootCause, poll_job
-
-async with RootCause(api_key="pk_...", workspace_id="ws_...") as rc:
-    job = await rc.simulations.run({...})
-
-    result = await poll_job(
-        lambda: rc.jobs.get(job["data"]["jobId"]),
-        interval_seconds=3.0,
-        timeout_seconds=600.0,
-        on_progress=lambda j: print(f"{j['status']} {j.get('progress', 0)}%"),
-    )
+twin.save("c8.rctwin")                       # export zip with trained model params
+twin2 = rc.load_twin("c8.rctwin")            # later, anywhere, same auth
 ```
 
-## Auto-Pagination
+## Authentication
 
-```python
-from rootcause import RootCause, paginate
-
-async with RootCause(api_key="pk_...", workspace_id="ws_...") as rc:
-    async for dataset in paginate(lambda cursor: rc.datasets.list()):
-        print(dataset["name"])
-```
+`rc.login()` resolves credentials in order: explicit `api_key="pk_…"` → `ROOTCAUSE_API_KEY` / `ROOTCAUSE_BASE_URL` env vars → cached OAuth token in `~/.rootcause/` → interactive browser login (PKCE; remote kernels get a paste-the-code fallback). Create API keys under **Organisation → API** on your platform.
 
 ## License
 

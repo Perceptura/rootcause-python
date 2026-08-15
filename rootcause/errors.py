@@ -2,31 +2,57 @@ from typing import Any
 
 
 class RootCauseError(Exception):
-    pass
+    """Base class for every error this SDK raises."""
+
+
+class AuthenticationError(RootCauseError):
+    """No usable credentials, or the platform rejected the ones provided."""
 
 
 class RootCauseApiError(RootCauseError):
-    def __init__(self, status: int, type_url: str, title: str, detail: str, instance: str | None = None) -> None:
-        super().__init__(f"{title}: {detail}")
+    """The API answered with a problem response."""
+
+    def __init__(self, status: int, title: str, detail: str, body: Any = None) -> None:
         self.status = status
-        self.type_url = type_url
         self.title = title
         self.detail = detail
-        self.instance = instance
+        self.body = body
+        super().__init__(f"[{status} {title}] {detail}")
 
     @classmethod
-    def from_response(cls, response_data: dict[str, Any], status_code: int) -> "RootCauseApiError":
-        return cls(
-            status=status_code,
-            type_url=response_data.get("type", ""),
-            title=response_data.get("title", "Unknown Error"),
-            detail=response_data.get("detail", "No details provided"),
-            instance=response_data.get("instance"),
-        )
+    def from_response(cls, body: Any, status: int) -> "RootCauseApiError":
+        if isinstance(body, dict):
+            title = str(body.get("title") or body.get("error") or "Error")
+            detail = str(body.get("detail") or body.get("error") or body)
+            return cls(status, title, detail, body)
+        return cls(status, "Error", str(body), body)
 
 
-class RootCauseTimeoutError(RootCauseError):
-    def __init__(self, job_id: str, timeout_seconds: float) -> None:
-        super().__init__(f"Job {job_id} did not complete within {timeout_seconds}s")
+class JobFailedError(RootCauseError):
+    """An asynchronous job finished in a terminal non-success state."""
+
+    def __init__(self, job_id: str, status: str, message: str | None = None) -> None:
         self.job_id = job_id
-        self.timeout_seconds = timeout_seconds
+        self.status = status
+        super().__init__(f"Job {job_id} ended as '{status}'" + (f": {message}" if message else ""))
+
+
+class JobTimeoutError(RootCauseError):
+    """An asynchronous job did not reach a terminal state within the allotted time."""
+
+
+class NotFoundInWorkspaceError(RootCauseError):
+    """A name or id did not resolve to exactly one object; carries suggestions."""
+
+    def __init__(self, kind: str, needle: str, candidates: list[str]) -> None:
+        self.kind = kind
+        self.needle = needle
+        self.candidates = candidates
+        hint = ""
+        if candidates:
+            hint = f" Closest matches: {', '.join(candidates[:5])}"
+        super().__init__(f'No {kind} named or with id "{needle}".{hint}')
+
+
+class KindMismatchError(RootCauseError):
+    """An explicit twin kind contradicts the panel/temporal kwargs supplied with it."""
