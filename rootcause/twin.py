@@ -209,14 +209,23 @@ class Twin:
         environments: list[str] | None = None,
         confidence: float = 0.95,
         origin_timestamp: int | None = None,
+        aggregate: str | None = None,
         *,
         timeout: float = 3600.0,
     ) -> ForecastResult:
-        """Forecast `horizon` steps ahead for the target variables."""
+        """Forecast `horizon` steps ahead for the target variables.
+
+        Panel twins forecast each environment; environments= narrows which, and
+        aggregate= ("sum", "avg", "min", "max") adds a combined series across
+        them. origin_timestamp (ms epoch) anchors the forecast start, which is
+        how backtests align a forecast against data the twin never saw.
+        """
         if not self.is_temporal:
             raise RootCauseError(
                 f'"{self.name}" is a {self.kind} twin; forecasting needs a temporal or panel-temporal twin'
             )
+        if aggregate is not None and not self.is_panel:
+            raise RootCauseError(f'aggregate= only applies to panel twins; "{self.name}" is {self.kind}')
         resolved_targets = targets or self._infer_targets()
         scenario: dict[str, Any] = {
             "type": "panel_forecast" if self.is_panel else "forecast",
@@ -227,6 +236,7 @@ class Twin:
         }
         if self.is_panel:
             scenario["environments"] = environments
+            scenario["aggregateMode"] = aggregate
         result = self._run_scenario(scenario, timeout=timeout)
         return ForecastResult(self._transport, self._workspace_id, result.run_id, result.run, scenario)
 

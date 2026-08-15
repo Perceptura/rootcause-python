@@ -28,7 +28,7 @@ from rootcause.errors import (
     RootCauseError,
 )
 from rootcause.graph import Graph
-from rootcause.interventions import add, adjust_prob, mean_metrics, members, metric, pct, prob, set  # noqa: A004
+from rootcause.interventions import add, adjust_prob, at, mean_metrics, members, metric, pct, prob, set  # noqa: A004
 from rootcause.ontology import Ontology, OntologyQueryResult
 from rootcause.results import ForecastResult, SampleDraws, SimulationResult
 from rootcause.twin import Twin
@@ -152,6 +152,7 @@ __all__ = [
     "Workspace",
     "add",
     "adjust_prob",
+    "at",
     "discover",
     "load_twin",
     "login",

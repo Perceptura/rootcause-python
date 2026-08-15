@@ -44,6 +44,29 @@ def members(
     return {"type": "set_members", "include": include, "exclude": exclude, "size": size, "replace": replace}
 
 
+def at(
+    spec: Any,
+    timestamp: int | None = None,
+    persistent: bool | None = None,
+    duration_steps: int | None = None,
+) -> dict[str, Any]:
+    """Schedule an intervention in time, for temporal and panel twins.
+
+    Wraps a value spec (or bare value) with when it applies and for how long:
+    rc.at(rc.pct(-10), persistent=True) applies from the first forecast step
+    onwards; duration_steps limits it; timestamp (ms epoch) anchors the start.
+    """
+    value_spec = spec if isinstance(spec, dict) and "type" in spec else {"type": "set_value", "value": spec}
+    scheduled: dict[str, Any] = {"valueSpec": value_spec}
+    if timestamp is not None:
+        scheduled["timestamp"] = int(timestamp)
+    if persistent is not None:
+        scheduled["persistent"] = bool(persistent)
+    if duration_steps is not None:
+        scheduled["durationSteps"] = int(duration_steps)
+    return scheduled
+
+
 def metric(name: str, sql: str, unit: str = "count", higher_is_better: bool = True) -> dict[str, Any]:
     """A simulation metric: SQL over the sampled frame, registered as df/data/dataset.
 
@@ -99,8 +122,11 @@ def compile_do(do: dict[str, Any], where: Any = None) -> list[dict[str, Any]]:
     conditions = compile_where(where)
     interventions: list[dict[str, Any]] = []
     for variable, spec in do.items():
-        value_spec = spec if isinstance(spec, dict) and "type" in spec else {"type": "set_value", "value": spec}
-        intervention: dict[str, Any] = {"variable": variable, "valueSpec": value_spec}
+        if isinstance(spec, dict) and "valueSpec" in spec:
+            intervention: dict[str, Any] = {"variable": variable, **spec}
+        else:
+            value_spec = spec if isinstance(spec, dict) and "type" in spec else {"type": "set_value", "value": spec}
+            intervention = {"variable": variable, "valueSpec": value_spec}
         if conditions:
             intervention["conditions"] = conditions
         interventions.append(intervention)

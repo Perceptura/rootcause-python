@@ -44,3 +44,18 @@ def test_compile_do_attaches_conditions_to_every_intervention():
 def test_compile_do_rejects_empty():
     with pytest.raises(ValueError):
         compile_do({})
+
+
+def test_at_schedules_temporal_fields_on_the_intervention():
+    scheduled = rc.at(rc.pct(-10), persistent=True, duration_steps=6)
+    interventions = compile_do({"price": scheduled})
+    assert interventions == [{
+        "variable": "price",
+        "valueSpec": {"type": "relative_change", "mode": "percentage", "value": -10},
+        "persistent": True,
+        "durationSteps": 6,
+    }]
+
+
+def test_at_accepts_bare_values():
+    assert rc.at(42, timestamp=1700000000000)["valueSpec"] == {"type": "set_value", "value": 42}

@@ -122,3 +122,13 @@ def test_train_on_trained_version_is_idempotent(api, transport, capsys):
     assert result is twin
     assert not any(r.method == "POST" for r in api.requests)
     assert "force=True" in capsys.readouterr().err
+
+
+def test_forecast_aggregate_only_for_panel(api, transport):
+    with pytest.raises(RootCauseError, match="aggregate"):
+        _twin(transport, "temporal").forecast(horizon=6, targets=["y"], aggregate="sum")
+
+    api.on("POST", "/api/v1/workspaces/ws1/simulations", {"data": {"runId": "r8"}}, status=202)
+    api.on("GET", "/api/v1/workspaces/ws1/simulations/r8", {"data": {"status": "completed"}})
+    _twin(transport, "multi-environment-temporal").forecast(horizon=6, targets=["y"], aggregate="sum")
+    assert api.body_of("POST", "/simulations")["scenario"]["aggregateMode"] == "sum"
