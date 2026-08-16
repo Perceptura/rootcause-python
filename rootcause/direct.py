@@ -75,72 +75,6 @@ def _ensure_source(workspace: Workspace, frame: "pd.DataFrame", fingerprint: str
     return workspace.upload(frame, name)
 
 
-def _create_view(workspace: Workspace, name: str, sources: list, operations: list) -> str:
-    created = workspace._transport.request(
-        "POST",
-        f"/api/v1/workspaces/{workspace.id}/data-views",
-        json_body={
-            "name": name,
-            "sources": sources,
-            "operations": operations,
-            "description": "rootcause-sdk direct mode view",
-        },
-    )
-    doc = created.get("data", created)
-    return str(doc.get("id") or doc.get("_id"))
-
-
-def _ensure_view(workspace: Workspace, source_id: str, fingerprint: str, *, wait: float = 120.0) -> str:
-    """Resolve a queryable view over the uploaded source.
-
-    A recommended view is preferred (it carries the join graph when one exists),
-    but a lone dataset never gets one, so the fallback is a pass-through view
-    bound to the source's ontology concepts at their current editVersion.
-    """
-    import time as _time
-
-    name = f"sdk-view-{fingerprint}"
-    existing = workspace.datasets.get(name)
-    if existing is not None:
-        return existing.id
-
-    envelope = workspace._transport.request(
-        "GET", f"/api/v1/workspaces/{workspace.id}/data-views/recommended"
-    )
-    payload = envelope.get("data", envelope)
-    recommended = payload.get("recommendedViews", []) if isinstance(payload, dict) else []
-    for view in recommended:
-        if set(view.get("datasetIds", [])) == {source_id}:
-            data_view = view.get("dataView") or {}
-            return _create_view(workspace, name, data_view.get("sources", []), data_view.get("operations", []))
-
-    deadline = _time.monotonic() + wait
-    while True:
-        concepts = workspace.ontology._concepts_raw(refresh=True)
-        mapped = [
-            concept
-            for concept in concepts
-            if any(m.get("datasetId") == source_id for m in concept.get("fieldMappings", []))
-        ]
-        if mapped:
-            concept_ids = [str(c.get("id") or c.get("_id")) for c in mapped]
-            source = {
-                "type": "DATASET",
-                "id": source_id,
-                "conceptIds": concept_ids,
-                "conceptVersions": {
-                    str(c.get("id") or c.get("_id")): int(c.get("editVersion") or 0) for c in mapped
-                },
-            }
-            return _create_view(workspace, name, [source], [])
-        if _time.monotonic() > deadline:
-            raise RootCauseError(
-                f"No ontology concepts materialised for the uploaded data within {wait:.0f}s, "
-                "so no view could be built. Retry, or create a data view over the source in the platform."
-            )
-        _time.sleep(5.0)
-
-
 def _find_reusable_twin(
     workspace: Workspace,
     fingerprint: str,
@@ -183,11 +117,12 @@ def discover(
     """Causal discovery straight from a DataFrame — no visible workspace ceremony.
 
     Artifacts live in the hidden ".sdk-scratch" workspace, keyed by a content
-    hash of the frame. Re-running on identical data reuses the existing twin
-    and its discovered graph instead of re-running discovery; calling .train()
-    on the reused graph still retrains, so a rerun picks up engine fixes.
-    force=True ignores the cache and discovers a fresh twin — the recovery
-    path when an old model is corrupt or its discovery predates a fix.
+    hash of the frame. The twin models the uploaded source directly — no
+    intermediate dataset is created. Re-running on identical data reuses the
+    existing twin and its discovered graph instead of re-running discovery;
+    calling .train() on the reused graph still retrains, so a rerun picks up
+    engine fixes. force=True ignores the cache and discovers a fresh twin —
+    the recovery path when an old model is corrupt or predates a fix.
     """
     import sys as _sys
 
@@ -207,12 +142,11 @@ def discover(
             return existing.graph
 
     source = _ensure_source(workspace, frame, fingerprint)
-    view_id = _ensure_view(workspace, source.id, fingerprint)
 
     twin = workspace.create_twin(
         name or f"sdk-twin-{fingerprint}",
         kind=resolved_kind,
-        data_view_id=view_id,
+        source_id=source.id,
         time_column=time,
         environment_columns=[entity] if entity else None,
         tags=[f"sdk:{fingerprint}"],

@@ -34,10 +34,10 @@ def test_identical_data_reuses_discovered_twin(api, transport, capsys):
 def test_force_bypasses_reuse_and_discovers_fresh(api, transport):
     fingerprint = frame_fingerprint(FRAME)
     _seed_scratch(api, [_twin_doc("dtA", fingerprint)])
-    api.on("GET", "/api/v1/workspaces/scratch1/datasets", {"data": [
+    api.on("GET", "/api/v1/workspaces/scratch1/sources", {"data": [
         {"id": "src1", "name": f"sdk-{fingerprint}"},
     ]})
-    api.on("GET", "/api/v1/workspaces/scratch1/datasets/src1/schema", {"data": [{"field": "a"}, {"field": "b"}]})
+    api.on("GET", "/api/v1/workspaces/scratch1/sources/src1/schema", {"data": [{"field": "a"}, {"field": "b"}]})
     api.on("GET", "/api/v1/workspaces/scratch1/data-views", {"data": [
         {"id": "view1", "name": f"sdk-view-{fingerprint}"},
     ]})

@@ -19,16 +19,17 @@ _ONTOLOGY_OPERATORS = {
 
 
 class OntologyQueryResult:
-    """Rows out of the ontology query engine, plus the compiled view and any warnings."""
+    """Rows out of the ontology query engine, plus the compiled dataset and any warnings."""
 
     def __init__(self, ontology: "Ontology", payload: dict[str, Any], request_body: dict[str, Any]) -> None:
         self._ontology = ontology
         self._request_body = request_body
+        pagination = payload.get("pagination") or {}
         self.rows: list[dict[str, Any]] = list(payload.get("rows", []))
-        self.next_start_key = payload.get("nextStartKey")
+        self.next_cursor = pagination.get("cursor")
         self.schema = payload.get("schema", [])
         self.row_count = payload.get("rowCount")
-        self.data_view = payload.get("dataView")
+        self.dataset = payload.get("dataset")
         self.warnings: list[str] = list(payload.get("warnings", []))
         self.summary = payload.get("summary")
         self.query = payload.get("query") or request_body.get("query")
@@ -37,11 +38,11 @@ class OntologyQueryResult:
         import pandas as pd
 
         rows = list(self.rows)
-        next_key = self.next_start_key
-        while next_key is not None and (max_rows is None or len(rows) < max_rows):
-            page = self._ontology._post_query({**self._request_body, "startKey": next_key})
+        cursor = self.next_cursor
+        while cursor is not None and (max_rows is None or len(rows) < max_rows):
+            page = self._ontology._post_query({**self._request_body, "cursor": cursor})
             rows.extend(page.get("rows", []))
-            next_key = page.get("nextStartKey")
+            cursor = (page.get("pagination") or {}).get("cursor")
         if max_rows is not None:
             rows = rows[:max_rows]
         frame = pd.DataFrame(rows)
@@ -123,7 +124,7 @@ class Ontology:
         group_by: list[str] | None = None,
         order_by: str | list[str] | None = None,
         aggregate: dict[str, str] | None = None,
-        datasets: list[str] | None = None,
+        sources: list[str] | None = None,
         limit: int = 1000,
         wide: bool = True,
         page_size: int = 1000,
@@ -149,18 +150,18 @@ class Ontology:
             ],
             "groupBy": [self._concept_id(name) for name in (group_by or [])],
             "orderBy": self._order(order_by),
-            "datasetIds": datasets or [],
+            "sourceIds": sources or [],
             "wide": wide,
             "limit": limit,
         }
-        body = {"query": query, "pageSize": page_size}
+        body = {"query": query, "limit": page_size}
         return OntologyQueryResult(self, self._post_query(body), body)
 
     def ask(self, prompt: str, page_size: int = 1000) -> OntologyQueryResult:
         """Natural-language question, translated server-side; the structured query is echoed back."""
-        body = {"prompt": prompt, "pageSize": page_size}
+        body = {"prompt": prompt, "limit": page_size}
         payload = self._post_query(body)
-        result = OntologyQueryResult(self, payload, {"query": payload.get("query"), "pageSize": page_size})
+        result = OntologyQueryResult(self, payload, {"query": payload.get("query"), "limit": page_size})
         return result
 
     def _post_query(self, body: dict[str, Any]) -> dict[str, Any]:

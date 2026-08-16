@@ -67,7 +67,57 @@ class _Collection:
 
 
 class Source:
-    """An ingested data source (what the UI calls a Source; the API calls it a dataset)."""
+    """An ingested data source — raw rows as imported."""
+
+    def __init__(self, transport: Transport, workspace_id: str, doc: dict[str, Any]) -> None:
+        self._transport = transport
+        self._workspace_id = workspace_id
+        self.doc = doc
+
+    @property
+    def id(self) -> str:
+        return str(self.doc.get("id") or self.doc.get("_id"))
+
+    @property
+    def name(self) -> str:
+        return str(self.doc.get("name", self.id))
+
+    def _path(self) -> str:
+        return f"/api/v1/workspaces/{self._workspace_id}/sources/{self.id}"
+
+    @property
+    def schema(self) -> "pd.DataFrame":
+        import pandas as pd
+
+        envelope = self._transport.request("GET", f"{self._path()}/schema")
+        entries = envelope.get("data", envelope)
+        if isinstance(entries, dict):
+            entries = entries.get("schemaEntries") or entries.get("schema") or []
+        return pd.DataFrame(entries)
+
+    def to_frame(self) -> "pd.DataFrame":
+        import pandas as pd
+
+        blob = self._transport.request_bytes("GET", f"{self._path()}/export/parquet")
+        return pd.read_parquet(io.BytesIO(blob))
+
+    def extend(self, frame: "pd.DataFrame") -> None:
+        """Append new rows to this source. Blocks until the rows are ingested."""
+        buffer = io.BytesIO()
+        frame.to_parquet(buffer, index=False)
+        self._transport.request(
+            "POST",
+            f"{self._path()}/extend",
+            content=buffer.getvalue(),
+            headers={"Content-Type": "application/octet-stream", "x-filename": f"{self.name}-extend.parquet"},
+        )
+
+    def __repr__(self) -> str:
+        return f"Source({self.name!r}, id={self.id})"
+
+
+class DataView:
+    """A derived, queryable dataset built from one or more sources."""
 
     def __init__(self, transport: Transport, workspace_id: str, doc: dict[str, Any]) -> None:
         self._transport = transport
@@ -101,49 +151,11 @@ class Source:
         blob = self._transport.request_bytes("GET", f"{self._path()}/export/parquet")
         return pd.read_parquet(io.BytesIO(blob))
 
-    def __repr__(self) -> str:
-        return f"Source({self.name!r}, id={self.id})"
-
-
-class DataView:
-    """A derived, queryable view (what the UI calls a Dataset; the API calls it a data view)."""
-
-    def __init__(self, transport: Transport, workspace_id: str, doc: dict[str, Any]) -> None:
-        self._transport = transport
-        self._workspace_id = workspace_id
-        self.doc = doc
-
-    @property
-    def id(self) -> str:
-        return str(self.doc.get("id") or self.doc.get("_id"))
-
-    @property
-    def name(self) -> str:
-        return str(self.doc.get("name", self.id))
-
-    def _path(self) -> str:
-        return f"/api/v1/workspaces/{self._workspace_id}/data-views/{self.id}"
-
-    @property
-    def schema(self) -> "pd.DataFrame":
-        import pandas as pd
-
-        envelope = self._transport.request("GET", f"{self._path()}/schema")
-        entries = envelope.get("data", envelope)
-        if isinstance(entries, dict):
-            entries = entries.get("schemaEntries") or entries.get("schema") or []
-        return pd.DataFrame(entries)
-
-    def to_frame(self) -> "pd.DataFrame":
-        import pandas as pd
-
-        blob = self._transport.request_bytes("GET", f"{self._path()}/export/parquet")
-        return pd.read_parquet(io.BytesIO(blob))
-
-    def records(self, limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
-        envelope = self._transport.request(
-            "GET", f"{self._path()}/records", params={"limit": limit, "offset": offset}
-        )
+    def records(self, limit: int = 100, cursor: str | None = None) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        envelope = self._transport.request("GET", f"{self._path()}/records", params=params)
         return list(envelope.get("data", []))
 
     def __repr__(self) -> str:
@@ -185,7 +197,7 @@ class Connector:
         job_id = str(envelope["data"]["jobId"])
         job = poll_job(self._transport, self._workspace_id, job_id, label=f"import {self.name}", timeout=timeout)
         dataset_id = job.get("domainEntityId") or job.get("datasetId")
-        listing = self._transport.request("GET", f"/api/v1/workspaces/{self._workspace_id}/datasets")
+        listing = self._transport.request("GET", f"/api/v1/workspaces/{self._workspace_id}/sources")
         docs = list(listing.get("data", []))
         for doc in docs:
             if dataset_id and (doc.get("id") == dataset_id or doc.get("_id") == dataset_id):
@@ -221,13 +233,13 @@ class Workspace:
 
     @property
     def sources(self) -> _Collection:
-        collection = _Collection(lambda: self._list("/datasets"), lambda doc: Source(self._transport, self.id, doc))
+        collection = _Collection(lambda: self._list("/sources"), lambda doc: Source(self._transport, self.id, doc))
         collection.kind = "source"
         return collection
 
     @property
     def datasets(self) -> _Collection:
-        collection = _Collection(lambda: self._list("/data-views"), lambda doc: DataView(self._transport, self.id, doc))
+        collection = _Collection(lambda: self._list("/datasets"), lambda doc: DataView(self._transport, self.id, doc))
         collection.kind = "dataset"
         return collection
 
@@ -262,14 +274,14 @@ class Workspace:
         frame.to_parquet(buffer, index=False)
 
         created = self._transport.request(
-            "POST", f"/api/v1/workspaces/{self.id}/datasets", json_body={"name": name}
+            "POST", f"/api/v1/workspaces/{self.id}/sources", json_body={"name": name}
         )
         doc = created.get("data", created)
         source = Source(self._transport, self.id, doc)
 
         self._transport.request(
             "POST",
-            f"/api/v1/workspaces/{self.id}/datasets/{source.id}/upload",
+            f"/api/v1/workspaces/{self.id}/sources/{source.id}/upload",
             content=buffer.getvalue(),
             headers={"Content-Type": "application/octet-stream", "x-filename": f"{name}.parquet"},
         )
@@ -290,14 +302,19 @@ class Workspace:
         name: str,
         *,
         kind: str = "static",
-        data_view_id: str | None = None,
+        dataset_id: str | None = None,
+        source_id: str | None = None,
         time_column: str | None = None,
         environment_columns: list[str] | None = None,
         tags: list[str] | None = None,
     ) -> Twin:
+        if dataset_id and source_id:
+            raise RootCauseError("Pass either dataset_id or source_id, not both")
         body: dict[str, Any] = {"name": name, "type": kind}
-        if data_view_id:
-            body["dataViewId"] = data_view_id
+        if dataset_id:
+            body["datasetId"] = dataset_id
+        if source_id:
+            body["sourceId"] = source_id
         if time_column:
             body["selectedTimeColumnName"] = time_column
         if environment_columns:

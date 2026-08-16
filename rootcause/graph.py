@@ -92,7 +92,7 @@ class Graph:
         """Fix an edge as present: domain knowledge the next discovery run must honour."""
         self._twin._transport.request(
             "PATCH",
-            f"{self._twin._version_path()}/graph",
+            f"{self._twin._version_path()}/graph/fixed",
             json_body={"addEdges": [{"source": cause, "target": effect}]},
         )
         return self.refresh()
@@ -101,7 +101,7 @@ class Graph:
         """Fix an edge as absent (anti-edge)."""
         self._twin._transport.request(
             "PATCH",
-            f"{self._twin._version_path()}/graph",
+            f"{self._twin._version_path()}/graph/fixed",
             json_body={"removeEdges": [{"source": cause, "target": effect}]},
         )
         return self.refresh()

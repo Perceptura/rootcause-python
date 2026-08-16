@@ -1,3 +1,4 @@
+from rootcause.errors import RootCauseError
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -127,6 +128,32 @@ class SimulationResult:
             "GET", f"/api/v1/workspaces/{self._workspace_id}/simulations/{self.run_id}/export/{fmt}"
         )
 
+    def sweep(self, metric: str | None = None) -> "pd.DataFrame":
+        """Full dose-response curve of a range intervention, one metric at a time.
+
+        With metric=None and several metrics on the run, raises with the list of
+        available metric names.
+        """
+        pd = _pandas()
+        params = {"metric": metric} if metric else {}
+        envelope = self._transport.request(
+            "GET",
+            f"/api/v1/workspaces/{self._workspace_id}/simulations/{self.run_id}/sweep",
+            params=params,
+        )
+        payload = envelope.get("data", envelope)
+        if metric is None:
+            metrics = payload.get("metrics") or []
+            if len(metrics) == 1:
+                return self.sweep(metrics[0])
+            raise RootCauseError(
+                f"This sweep carries {len(metrics)} metrics; pass metric= one of: {', '.join(metrics)}"
+            )
+        frame = pd.DataFrame(payload.get("points") or [])
+        frame.attrs["metric"] = payload.get("metric")
+        frame.attrs["sweptVariable"] = payload.get("sweptVariable")
+        return frame
+
     def __repr__(self) -> str:
         scenario_type = (self.scenario or {}).get("type") or self.run.get("scenarioType") or "simulation"
         return f"SimulationResult({scenario_type}, run={self.run_id}, status={self.run.get('status')})"
@@ -169,3 +196,71 @@ class ForecastResult(SimulationResult):
             if frames:
                 return pd.concat(frames, ignore_index=True)
         return super().to_frame()
+
+
+class UpdateResult:
+    """Outcome of an incremental model update (assimilation)."""
+
+    def __init__(self, job: dict[str, Any]) -> None:
+        self.job = job
+        # The assimilation outcome rides on the run's metadata; `result` stays null.
+        outcome = {**(job.get("result") or {}), **(job.get("metadata") or {})}
+        self.status = str(outcome.get("status") or job.get("status") or "unknown")
+        self.rows_assimilated = outcome.get("rowsAssimilated")
+        self.reasons = list(outcome.get("reasons") or [])
+
+    @property
+    def retrain_required(self) -> bool:
+        return self.status == "retrain_required"
+
+    def __repr__(self) -> str:
+        rows = f", rows={self.rows_assimilated}" if self.rows_assimilated is not None else ""
+        return f"UpdateResult(status={self.status!r}{rows})"
+
+
+class ScoreResult:
+    """Verdicts and per-row counterfactual changes from a batch scoring run."""
+
+    def __init__(self, transport: Any, workspace_id: str, run_id: str) -> None:
+        self._transport = transport
+        self._workspace_id = workspace_id
+        self.run_id = run_id
+        self._first_page: dict[str, Any] | None = None
+
+    def _page(self, cursor: str | None = None, limit: int = 100) -> dict[str, Any]:
+        params: dict[str, Any] = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        return self._transport.request(
+            "GET",
+            f"/api/v1/workspaces/{self._workspace_id}/simulations/{self.run_id}/score",
+            params=params,
+        )
+
+    @property
+    def digest(self) -> dict[str, Any]:
+        """Verdict counts, top drivers, and the first row summaries."""
+        if self._first_page is None:
+            self._first_page = self._page()
+        return dict((self._first_page.get("data") or {}).get("digest") or {})
+
+    def to_frame(self, max_rows: int | None = None) -> "pd.DataFrame":
+        """Every scored row with its full change list, paged transparently."""
+        pd = _pandas()
+        if self._first_page is None:
+            self._first_page = self._page()
+        page = self._first_page
+        rows = list((page.get("data") or {}).get("rows") or [])
+        cursor = (page.get("pagination") or {}).get("cursor")
+        while cursor and (max_rows is None or len(rows) < max_rows):
+            page = self._page(cursor)
+            rows.extend((page.get("data") or {}).get("rows") or [])
+            cursor = (page.get("pagination") or {}).get("cursor")
+        if max_rows is not None:
+            rows = rows[:max_rows]
+        return pd.json_normalize(rows)
+
+    def __repr__(self) -> str:
+        verdicts = self.digest.get("verdictCounts") or {}
+        summary = ", ".join(f"{key}={value}" for key, value in verdicts.items() if value)
+        return f"ScoreResult(run={self.run_id}, {summary or 'no verdicts'})"

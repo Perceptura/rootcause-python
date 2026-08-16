@@ -10,7 +10,7 @@ def _workspace(transport) -> Workspace:
 
 
 def test_collection_resolves_by_name_id_and_case(api, transport):
-    api.on("GET", "/api/v1/workspaces/ws1/datasets", {"data": [
+    api.on("GET", "/api/v1/workspaces/ws1/sources", {"data": [
         {"id": "d1", "name": "Shipments"},
         {"id": "d2", "name": "Returns"},
     ]})
@@ -21,14 +21,14 @@ def test_collection_resolves_by_name_id_and_case(api, transport):
 
 
 def test_collection_miss_suggests_close_matches(api, transport):
-    api.on("GET", "/api/v1/workspaces/ws1/datasets", {"data": [{"id": "d1", "name": "Shipments"}]})
+    api.on("GET", "/api/v1/workspaces/ws1/sources", {"data": [{"id": "d1", "name": "Shipments"}]})
     with pytest.raises(NotFoundInWorkspaceError) as exc:
         _workspace(transport).sources["Shipmets"]
     assert "Shipments" in str(exc.value)
 
 
 def test_collection_completions_are_live_names(api, transport):
-    api.on("GET", "/api/v1/workspaces/ws1/datasets", {"data": [{"id": "d1", "name": "Shipments"}]})
+    api.on("GET", "/api/v1/workspaces/ws1/sources", {"data": [{"id": "d1", "name": "Shipments"}]})
     assert _workspace(transport).sources._ipython_key_completions_() == ["Shipments"]
 
 
@@ -40,7 +40,7 @@ CONCEPTS = {"data": [
 
 def test_ontology_query_compiles_names_operators_and_order(api, transport):
     api.on("GET", "/api/v1/workspaces/ws1/ontology/concepts", CONCEPTS)
-    api.on("POST", "/api/v1/workspaces/ws1/ontology/query", {"data": {"rows": [], "nextStartKey": None}})
+    api.on("POST", "/api/v1/workspaces/ws1/ontology/query", {"data": {"rows": [], "pagination": {"hasMore": False}}})
 
     ontology = Ontology(transport, "ws1")
     ontology.query(
@@ -68,8 +68,8 @@ def test_ontology_query_compiles_names_operators_and_order(api, transport):
 def test_ontology_query_paginates_to_frame(api, transport):
     api.on("GET", "/api/v1/workspaces/ws1/ontology/concepts", CONCEPTS)
     pages = [
-        {"data": {"rows": [{"revenue": 1}], "nextStartKey": 1}},
-        {"data": {"rows": [{"revenue": 2}], "nextStartKey": None}},
+        {"data": {"rows": [{"revenue": 1}], "pagination": {"cursor": "MQ", "hasMore": True}}},
+        {"data": {"rows": [{"revenue": 2}], "pagination": {"hasMore": False}}},
     ]
     calls = {"n": 0}
 
@@ -96,7 +96,7 @@ def test_ontology_unknown_concept_suggests(api, transport):
 
 
 def test_ontology_ask_sends_prompt(api, transport):
-    api.on("POST", "/api/v1/workspaces/ws1/ontology/query", {"data": {"rows": [], "nextStartKey": None, "query": {"conceptIds": []}}})
+    api.on("POST", "/api/v1/workspaces/ws1/ontology/query", {"data": {"rows": [], "pagination": {"hasMore": False}, "query": {"conceptIds": []}}})
     result = Ontology(transport, "ws1").ask("average revenue in Florida")
     assert api.body_of("POST", "/ontology/query")["prompt"] == "average revenue in Florida"
     assert result.query == {"conceptIds": []}
@@ -106,7 +106,7 @@ def test_to_frame_drops_parquet_index_artifacts(api, transport):
     api.on("GET", "/api/v1/workspaces/ws1/ontology/concepts", CONCEPTS)
     api.on("POST", "/api/v1/workspaces/ws1/ontology/query", {"data": {
         "rows": [{"revenue": 1, "__index_level_0__": 0}],
-        "nextStartKey": None,
+        "pagination": {"hasMore": False},
     }})
     frame = Ontology(transport, "ws1").query(select=["revenue"]).to_frame()
     assert list(frame.columns) == ["revenue"]

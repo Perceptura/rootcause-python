@@ -67,6 +67,22 @@ def at(
     return scheduled
 
 
+def range(from_: float | None = None, to: float | None = None, *, steps: int | None = None) -> dict[str, Any]:  # noqa: A001
+    """Sweep a numeric variable across a grid instead of pinning it: rc.range(15, 30).
+
+    Omit from_/to to sweep the variable's observed p05..p95. A scenario carries
+    at most one range intervention; read the curves back with result.sweep().
+    """
+    spec: dict[str, Any] = {"type": "range"}
+    if from_ is not None:
+        spec["from"] = float(from_)
+    if to is not None:
+        spec["to"] = float(to)
+    if steps is not None:
+        spec["steps"] = int(steps)
+    return spec
+
+
 def metric(name: str, sql: str, unit: str = "count", higher_is_better: bool = True) -> dict[str, Any]:
     """A simulation metric: SQL over the sampled frame, registered as df/data/dataset.
 

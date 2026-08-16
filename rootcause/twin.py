@@ -5,7 +5,7 @@ from rootcause._http import Transport, poll_job, poll_run
 from rootcause.errors import RootCauseError
 from rootcause.graph import Graph
 from rootcause.interventions import compile_do
-from rootcause.results import ForecastResult, SampleDraws, SimulationResult
+from rootcause.results import ForecastResult, SampleDraws, ScoreResult, SimulationResult, UpdateResult
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -82,18 +82,30 @@ class Twin:
         self._version_doc = envelope.get("data", envelope)
 
     @property
+    def source(self) -> "Any":
+        """The raw source backing this version, or None when it trains off a dataset."""
+        source_id = self.version.get("sourceId")
+        if not source_id:
+            return None
+        from rootcause.workspace import Source
+
+        envelope = self._transport.request("GET", f"/api/v1/workspaces/{self._workspace_id}/sources/{source_id}")
+        return Source(self._transport, self._workspace_id, envelope.get("data", envelope))
+
+    @property
     def graph(self) -> Graph:
         return Graph(self)
 
-    def discover(self, *, timeout: float = 3600.0) -> Graph:
+    def discover(self, *, webhook_url: str | None = None, timeout: float = 3600.0) -> Graph:
         """Run causal discovery on this version and return the discovered graph."""
-        envelope = self._transport.request("POST", f"{self._version_path()}/discover")
+        body = {"webhookUrl": webhook_url} if webhook_url else None
+        envelope = self._transport.request("POST", f"{self._version_path()}/discover", json_body=body)
         job_id = str(envelope["data"]["jobId"])
         poll_job(self._transport, self._workspace_id, job_id, label=f"discover {self.name}", timeout=timeout)
         self._refresh_version()
         return self.graph
 
-    def train(self, *, timeout: float = 7200.0) -> "Twin":
+    def train(self, *, webhook_url: str | None = None, timeout: float = 7200.0) -> "Twin":
         """Train the model for this version, blocking until done.
 
         An already-trained version is returned as-is: the platform's lifecycle
@@ -110,15 +122,17 @@ class Twin:
                 file=_sys.stderr,
             )
             return self
-        envelope = self._transport.request("POST", f"{self._version_path()}/train")
+        body = {"webhookUrl": webhook_url} if webhook_url else None
+        envelope = self._transport.request("POST", f"{self._version_path()}/train", json_body=body)
         job_id = str(envelope["data"]["jobId"])
         poll_job(self._transport, self._workspace_id, job_id, label=f"train {self.name}", timeout=timeout)
         self._refresh_version()
         return self
 
-    def run_pipeline(self, *, timeout: float = 7200.0) -> "Twin":
+    def run_pipeline(self, *, webhook_url: str | None = None, timeout: float = 7200.0) -> "Twin":
         """Discovery + dependencies + roles + training in one pass."""
-        envelope = self._transport.request("POST", f"{self._version_path()}/run-pipeline")
+        body = {"webhookUrl": webhook_url} if webhook_url else None
+        envelope = self._transport.request("POST", f"{self._version_path()}/run-pipeline", json_body=body)
         job_id = str(envelope["data"]["jobId"])
         poll_job(self._transport, self._workspace_id, job_id, label=f"pipeline {self.name}", timeout=timeout)
         self._refresh_version()
@@ -127,6 +141,89 @@ class Twin:
     def evaluate(self) -> dict[str, Any]:
         envelope = self._transport.request("GET", f"{self._version_path()}/evaluation")
         return envelope.get("data", envelope)
+
+    def new_version(self, *, bump: str = "patch", base_version_id: str | None = None, dataset_id: str | None = None) -> "Twin":
+        """Derive a fresh, untrained version from an existing one — the retrain primitive.
+
+        Inherits the base version's configuration and causal graph, resets every
+        training output, and returns the twin pinned to the new version.
+        """
+        body: dict[str, Any] = {"bump": bump}
+        if base_version_id:
+            body["baseVersionId"] = base_version_id
+        if dataset_id:
+            body["datasetId"] = dataset_id
+        envelope = self._transport.request("POST", f"{self._twin_path()}/versions", json_body=body)
+        doc = envelope.get("data", envelope)
+        return self.at_version(str(doc.get("id") or doc.get("_id")))
+
+    def retrain(self, *, bump: str = "patch", timeout: float = 7200.0) -> "Twin":
+        """Create a new version off the latest and train it — the full retrain in one call."""
+        fresh = self.new_version(bump=bump)
+        return fresh.train(timeout=timeout)
+
+    @property
+    def update_eligibility(self) -> dict[str, Any]:
+        """Whether update() would find new data, and whether it can assimilate incrementally."""
+        envelope = self._transport.request("GET", f"{self._version_path()}/update-eligibility")
+        return envelope.get("data", envelope)
+
+    def update(self, *, webhook_url: str | None = None, timeout: float = 3600.0) -> UpdateResult:
+        """Fold data added to the backing source since the last train/update into the model.
+
+        No retrain: incremental assimilation. The job succeeds with a status
+        rather than failing — `committed`, `up_to_date`, or `retrain_required`
+        (the model can't take these rows incrementally; result.reasons says
+        why — call retrain()). Static and temporal twins assimilate out of the
+        box; panel twins need the v2 panel engine. Requires a trained version;
+        extend or sync the source first so there is something new.
+        """
+        body: dict[str, Any] = {}
+        if webhook_url:
+            body["webhookUrl"] = webhook_url
+        envelope = self._transport.request("POST", f"{self._version_path()}/update-model", json_body=body)
+        job_id = str(envelope["data"]["jobId"])
+        job = poll_job(self._transport, self._workspace_id, job_id, label=f"update {self.name}", timeout=timeout)
+        self._refresh_version()
+        return UpdateResult(job)
+
+    @property
+    def environments(self) -> "pd.DataFrame":
+        """Panel twins: the environments in the version's data, with sample sizes."""
+        import pandas as pd
+
+        envelope = self._transport.request("GET", f"{self._version_path()}/environments")
+        payload = envelope.get("data", envelope)
+        rows = payload.get("environments", []) if isinstance(payload, dict) else []
+        return pd.DataFrame(rows)
+
+    def score(
+        self,
+        rows: "pd.DataFrame | list[dict[str, Any]]",
+        targets: list[dict[str, Any]],
+        *,
+        max_changes: int = 3,
+        constraints: dict[str, Any] | None = None,
+        webhook_url: str | None = None,
+        timeout: float = 3600.0,
+    ) -> ScoreResult:
+        """Score rows against target outcomes: each row gets its smallest flip.
+
+        Static trained twins only. rows is a DataFrame or list of dicts whose
+        keys name twin variables; targets is [{"variable": ..., "value": ...}].
+        Blocks until the run completes and returns the ScoreResult.
+        """
+        if hasattr(rows, "to_dict"):
+            rows = rows.to_dict(orient="records")  # type: ignore[union-attr]
+        body: dict[str, Any] = {"rows": rows, "targets": targets, "maxChanges": max_changes}
+        if constraints:
+            body["constraints"] = constraints
+        if webhook_url:
+            body["webhookUrl"] = webhook_url
+        envelope = self._transport.request("POST", f"{self._version_path()}/score", json_body=body)
+        run_id = str(envelope["data"]["runId"])
+        poll_run(self._transport, self._workspace_id, run_id, label=f"score {self.name}", timeout=timeout)
+        return ScoreResult(self._transport, self._workspace_id, run_id)
 
     def sample(
         self,

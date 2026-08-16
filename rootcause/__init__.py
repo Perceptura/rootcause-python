@@ -28,9 +28,9 @@ from rootcause.errors import (
     RootCauseError,
 )
 from rootcause.graph import Graph
-from rootcause.interventions import add, adjust_prob, at, mean_metrics, members, metric, pct, prob, set  # noqa: A004
+from rootcause.interventions import add, adjust_prob, at, mean_metrics, members, metric, pct, prob, range, set  # noqa: A004
 from rootcause.ontology import Ontology, OntologyQueryResult
-from rootcause.results import ForecastResult, SampleDraws, SimulationResult
+from rootcause.results import ForecastResult, SampleDraws, ScoreResult, SimulationResult, UpdateResult
 from rootcause.twin import Twin
 from rootcause.workspace import Connector, DataView, Source, Workspace
 
@@ -61,6 +61,12 @@ def _transport() -> Transport:
     transport = _session["transport"]
     assert transport is not None
     return transport
+
+
+def whoami() -> dict[str, "Any"]:
+    """What the current credential is: ids, scopes, auth type, rate limit."""
+    envelope = _transport().request("GET", "/api/v1/me")
+    return envelope.get("data", envelope)
 
 
 def workspaces() -> "pd.DataFrame":
