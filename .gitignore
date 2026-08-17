@@ -8,3 +8,5 @@ build/
 
 *.rctwin
 examples/*-executed.ipynb
+.ipynb_checkpoints/
+*.rctwin

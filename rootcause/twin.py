@@ -197,6 +197,17 @@ class Twin:
         rows = payload.get("environments", []) if isinstance(payload, dict) else []
         return pd.DataFrame(rows)
 
+    def env(self, *environments: "str | dict[str, str]") -> "EnvSubset":
+        """A handle pinned to a subset of this panel twin's environments.
+
+        Pass environment names ("london"), envKeys ("store=london"), or exact
+        {column: value} combos. Everything on the handle — graph, sample,
+        intervene, forecast — is scoped to the subset.
+        """
+        if not environments:
+            raise RootCauseError("Pass at least one environment, e.g. twin.env(\"london\", \"berlin\")")
+        return EnvSubset(self, list(environments))
+
     def score(
         self,
         rows: "pd.DataFrame | list[dict[str, Any]]",
@@ -426,3 +437,135 @@ class Twin:
             ]
         )
         return f"<div><p><b>{self.name}</b></p><table>{rows}</table></div>"
+
+
+class EnvSubset:
+    """A panel twin pinned to a subset of its environments.
+
+    Everything on the handle runs scoped to the subset: `graph` re-aggregates
+    the causal adjacency over just these environments, and sample/intervene/
+    forecast delegate to the twin with environments= filled in.
+    """
+
+    def __init__(self, twin: Twin, environments: list["str | dict[str, str]"]) -> None:
+        self.twin = twin
+        self._requested = environments
+
+    def _listing(self) -> dict[str, Any]:
+        envelope = self.twin._transport.request("GET", f"{self.twin._version_path()}/environments")
+        payload = envelope.get("data", envelope)
+        return payload if isinstance(payload, dict) else {}
+
+    def combos(self) -> list[dict[str, str]]:
+        """The subset as exact {column: value} combos, resolved against the twin's environments.
+
+        The listing carries each environment's values as a list ordered by
+        environmentColumns; zipping the two recovers the combo.
+        """
+        payload: dict[str, Any] | None = None
+        resolved: list[dict[str, str]] = []
+        for item in self._requested:
+            if isinstance(item, dict):
+                resolved.append({str(k): str(v) for k, v in item.items()})
+                continue
+            if payload is None:
+                payload = self._listing()
+            columns = [str(c) for c in (payload.get("environmentColumns") or [])]
+            envs = list(payload.get("environments") or [])
+            match = next(
+                (e for e in envs
+                 if item == e.get("envKey") or item in [str(v) for v in (e.get("values") or [])]),
+                None,
+            )
+            if match is None:
+                known = ", ".join(str(e.get("envKey")) for e in envs[:8])
+                raise RootCauseError(f'Environment "{item}" not found on "{self.twin.name}" (known: {known}…)')
+            values = [str(v) for v in (match.get("values") or [])]
+            if not columns or len(columns) != len(values):
+                raise RootCauseError(
+                    f'Could not resolve "{item}" to a column combo; pass it as '
+                    f'{{column: value}} instead (environment columns: {columns})'
+                )
+            resolved.append(dict(zip(columns, values)))
+        return resolved
+
+    def _names(self) -> list[str]:
+        names: list[str] = []
+        for item in self._requested:
+            if isinstance(item, dict):
+                if len(item) != 1:
+                    raise RootCauseError(
+                        "Simulations on a multi-column environment subset need string names; "
+                        "pass the envKey strings instead of dicts"
+                    )
+                names.append(str(next(iter(item.values()))))
+            else:
+                names.append(item)
+        return names
+
+    def adjacency(self, agreement_threshold: float | None = None) -> "pd.DataFrame":
+        """The causal adjacency aggregated over just this subset of environments.
+
+        Returns the edges as a DataFrame (source, target, strength, agreementRate, …);
+        frame.attrs carries envCount, sampleSize, totalEnvCount, and the threshold.
+        """
+        import pandas as pd
+
+        body: dict[str, Any] = {"mode": "environments", "environments": self.combos()}
+        if agreement_threshold is not None:
+            body["agreementThreshold"] = agreement_threshold
+        envelope = self.twin._transport.request(
+            "POST", f"{self.twin._version_path()}/graph/slice", json_body=body
+        )
+        data = envelope.get("data", envelope)
+        frame = pd.DataFrame(data.get("causalGraph", []))
+        for key in ("envCount", "sampleSize", "totalEnvCount", "unresolvedEnvCount", "agreementThreshold"):
+            if key in data:
+                frame.attrs[key] = data[key]
+        return frame
+
+    @property
+    def graph(self) -> "pd.DataFrame":
+        return self.adjacency()
+
+    def sample(self, n: int = 1000, do: dict[str, Any] | None = None, where: Any = None, seed: int | None = None) -> SampleDraws:
+        return self.twin.sample(n=n, do=do, where=where, environments=self._names(), seed=seed)
+
+    def intervene(
+        self,
+        do: dict[str, Any],
+        where: Any = None,
+        metrics: list[dict[str, Any]] | None = None,
+        outcomes: list[str] | None = None,
+        *,
+        timeout: float = 3600.0,
+    ) -> SimulationResult:
+        return self.twin.intervene(
+            do, where=where, metrics=metrics, outcomes=outcomes, environments=self._names(), timeout=timeout
+        )
+
+    def forecast(
+        self,
+        horizon: int,
+        targets: list[str] | None = None,
+        confidence: float = 0.95,
+        origin_timestamp: int | None = None,
+        aggregate: str | None = None,
+        *,
+        timeout: float = 3600.0,
+    ) -> ForecastResult:
+        return self.twin.forecast(
+            horizon,
+            targets=targets,
+            environments=self._names(),
+            confidence=confidence,
+            origin_timestamp=origin_timestamp,
+            aggregate=aggregate,
+            timeout=timeout,
+        )
+
+    def __repr__(self) -> str:
+        labels = ", ".join(
+            "/".join(item.values()) if isinstance(item, dict) else str(item) for item in self._requested
+        )
+        return f"EnvSubset({self.twin.name!r}, environments=[{labels}])"

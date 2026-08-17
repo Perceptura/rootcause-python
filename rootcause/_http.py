@@ -319,8 +319,18 @@ def poll_job(
     """Block until a pipeline job reaches a terminal state, drawing a progress line."""
     progress = _Progress(label)
     deadline = time.monotonic() + timeout
+    # A freshly dispatched job can answer 404 for a beat while the run document
+    # materialises; treat that as pending for a short grace window.
+    grace_deadline = time.monotonic() + 30.0
     while True:
-        doc = transport.request("GET", f"/api/v1/workspaces/{workspace_id}/jobs/{job_id}").get("data", {})
+        try:
+            doc = transport.request("GET", f"/api/v1/workspaces/{workspace_id}/jobs/{job_id}").get("data", {})
+        except RootCauseApiError as error:
+            if error.status == 404 and time.monotonic() < grace_deadline:
+                progress.update("registering")
+                time.sleep(interval)
+                continue
+            raise
         status = str(doc.get("status", "unknown"))
         progress.update(status, doc.get("progress"))
         if status in JOB_TERMINAL:
