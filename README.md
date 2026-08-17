@@ -85,6 +85,32 @@ async with RootCause(api_key="pk_...", workspace_id="ws_...") as rc:
         print(dataset["name"])
 ```
 
+## Releasing
+
+Publishing to PyPI is driven entirely by git tags. The tag is the version — `pyproject.toml`
+is patched in CI at build time, so don't bother bumping it by hand.
+
+1. Push a tag matching `MAJOR.MINOR.PATCH` (pre-releases like `1.2.0rc1` also work):
+
+   ```bash
+   git tag 0.2.0 && git push origin 0.2.0
+   ```
+
+2. The `build` job builds the sdist + wheel and runs `twine check --strict`.
+3. Trigger the `publish` job (manual) to release to PyPI.
+
+### Required CI variable
+
+Set as a **masked** and **protected** project-level variable in GitLab
+(Settings → CI/CD → Variables):
+
+| Variable         | Purpose                                             |
+| ---------------- | --------------------------------------------------- |
+| `PYPI_API_TOKEN` | PyPI API token (`pypi-...`), scoped to this project |
+
+It is passed to twine as the password with username `__token__`; nothing is
+hardcoded in the pipeline.
+
 ## License
 
 MIT

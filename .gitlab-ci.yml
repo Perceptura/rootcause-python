@@ -3,9 +3,12 @@ stages:
   - build
   - publish
 
+variables:
+  PYTHON_IMAGE: python:3.12-slim
+
 generate:
   stage: generate
-  image: python:3.12-slim
+  image: $PYTHON_IMAGE
   script:
     - pip install openapi-python-client
     - openapi-python-client generate --path $OPENAPI_SPEC_URL --output-path /tmp/gen --overwrite
@@ -19,23 +22,44 @@ generate:
 
 build:
   stage: build
-  image: python:3.12-slim
+  image: $PYTHON_IMAGE
   script:
-    - pip install hatchling build
+    # On a tag, the tag is the single source of truth for the version.
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        echo "Pinning version to tag $CI_COMMIT_TAG"
+        sed -i -E "s/^version = \".*\"/version = \"$CI_COMMIT_TAG\"/" pyproject.toml
+        grep -E '^version = ' pyproject.toml
+      fi
+    - pip install build twine
     - python -m build
+    - twine check --strict dist/*
+    - ls -l dist/
   artifacts:
     paths:
       - dist/
+    expire_in: 30 days
   rules:
+    - if: $CI_COMMIT_TAG =~ /^[0-9]+\.[0-9]+\.[0-9]+([ab]|rc)?[0-9]*$/
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_COMMIT_TAG =~ /^[0-9]+\.[0-9]+\.[0-9]+$/
 
 publish:
   stage: publish
-  image: python:3.12-slim
+  image: $PYTHON_IMAGE
+  needs:
+    - job: build
+      artifacts: true
+  environment:
+    name: pypi
+    url: https://pypi.org/project/rootcause-sdk/
+  variables:
+    TWINE_USERNAME: __token__
+    TWINE_PASSWORD: $PYPI_API_TOKEN
+    TWINE_REPOSITORY_URL: https://upload.pypi.org/legacy/
   script:
     - pip install twine
-    - twine upload dist/* -u __token__ -p $PYPI_TOKEN
+    - twine check --strict dist/*
+    - twine upload --non-interactive --disable-progress-bar dist/*
   rules:
-    - if: $CI_COMMIT_TAG =~ /^[0-9]+\.[0-9]+\.[0-9]+$/
+    - if: $CI_COMMIT_TAG =~ /^[0-9]+\.[0-9]+\.[0-9]+([ab]|rc)?[0-9]*$/
       when: manual
