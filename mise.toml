@@ -1,0 +1,45 @@
+# Toolchain for rootcause-sdk. `mise install` gets you everything.
+#
+# Python *packages* are not pinned here — they live in pyproject.toml's
+# optional-dependency groups (dev, docs, graph, jupyter) and are installed by
+# uv, so there is one source of truth per kind of dependency.
+
+[tools]
+# CI builds on python:3.12-slim; match it locally.
+python = "3.12"
+uv = "latest"
+# Used directly for linting, and by mkdocstrings to format the signatures it
+# renders into the API reference.
+ruff = "latest"
+
+[env]
+# Keep uv's venv in-tree and let tasks below assume it.
+UV_PROJECT_ENVIRONMENT = ".venv"
+
+[tasks.sync]
+description = "Install the package with every extra into .venv"
+run = "uv sync --all-extras"
+
+[tasks.test]
+description = "Run the test suite"
+run = "uv run --extra dev pytest -q"
+
+[tasks.lint]
+description = "Lint with ruff"
+run = "ruff check rootcause tests"
+
+[tasks.fmt]
+description = "Format with ruff"
+run = "ruff format rootcause tests"
+
+[tasks.docs]
+description = "Serve the docs at localhost:8000 with live reload"
+run = "uv run --extra docs mkdocs serve"
+
+[tasks."docs:build"]
+description = "Build the docs into site/ and fail on any warning"
+run = "uv run --extra docs mkdocs build --strict"
+
+[tasks.build]
+description = "Build the sdist and wheel into dist/"
+run = "uv build"

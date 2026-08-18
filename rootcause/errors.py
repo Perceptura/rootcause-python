@@ -1,3 +1,5 @@
+"""Exception hierarchy for the SDK; every error derives from RootCauseError."""
+
 from typing import Any
 
 

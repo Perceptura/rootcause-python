@@ -1,0 +1,93 @@
+site_name: rootcause-sdk
+site_description: Official Python SDK for the RootCause causal AI platform
+site_url: https://docs.rootcause.ai/python/
+repo_url: https://gitlab.com/perceptura/sdks/rootcause-python
+repo_name: perceptura/sdks/rootcause-python
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - content.code.annotate
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+nav:
+  - Getting started: index.md
+  - API reference:
+      - Top-level API: reference/index.md
+      - Workspace and data: reference/workspace.md
+      - Twin: reference/twin.md
+      - Graph: reference/graph.md
+      - Results: reference/results.md
+      - Ontology: reference/ontology.md
+      - Interventions: reference/interventions.md
+      - Jupyter: reference/jupyter.md
+      - Errors: reference/errors.md
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [.]
+          options:
+            # Rendering
+            show_source: true
+            show_root_heading: true
+            show_root_full_path: false
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            heading_level: 2
+            members_order: source
+            # Signatures: the package is fully typed, so lean on annotations
+            # rather than asking docstrings to restate parameter types.
+            separate_signature: true
+            show_signature_annotations: true
+            signature_crossrefs: true
+            line_length: 88
+            # Docstrings
+            docstring_style: google
+            docstring_section_style: table
+            merge_init_into_class: true
+            # The public surface is only partly docstringed; show undocumented
+            # members anyway so the typed signature is at least discoverable.
+            show_if_no_docstring: true
+            # Hide private members; keep dunder-free public surface only.
+            filters:
+              - "!^_"
+          inventories:
+            - https://docs.python.org/3/objects.inv
+            - https://pandas.pydata.org/docs/objects.inv
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+
+watch:
+  - rootcause

@@ -10,23 +10,15 @@ pip install rootcause-sdk
 
 ## Quick start
 
-```python
-import rootcause as rc
-import pandas as pd
+The quickstart lives in the docs, so there is one canonical version of it:
+[docs.rootcause.ai](https://docs.rootcause.ai). It covers installation, how
+`rc.login()` resolves credentials, and a DataFrame taken all the way to a
+discovered causal graph, with real transcripts throughout.
 
-rc.login()                                   # ROOTCAUSE_API_KEY, or browser login
+To read it from this repo, `mise run docs` and open <http://localhost:8000>.
 
-df = pd.read_csv("lalonde.csv")
-
-graph = rc.discover(df, target="re78")       # causal discovery on a DataFrame
-graph.pin("treat", "re78")                   # domain knowledge
-twin = graph.train()
-
-ate = twin.intervene({"treat": rc.set(1)}, where={"re75": ("<", 5000)})
-ate.summary
-```
-
-Nothing above mentions a workspace: direct mode keeps platform ceremony out of sight and reuses uploads by content hash.
+Direct mode keeps platform ceremony out of sight and reuses uploads by content hash:
+nothing below mentions a workspace until the next section does.
 
 ## Platform mode
 

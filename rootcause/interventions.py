@@ -1,3 +1,8 @@
+"""Builders for the `do` and `where` payloads the twin's verbs take.
+
+Every builder returns a plain dict, so a hand-written payload works just as well.
+"""
+
 from typing import Any
 
 _OPERATOR_SYMBOLS = {"==", "!=", "<>", ">", "<", ">=", "<=", "in", "not_in", "eq", "ne", "gt", "lt", "ge", "le"}

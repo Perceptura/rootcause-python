@@ -1,3 +1,5 @@
+"""Platform-mode handles: a workspace and the sources, views, and connectors in it."""
+
 import difflib
 import io
 import time

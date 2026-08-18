@@ -10,3 +10,5 @@ build/
 examples/*-executed.ipynb
 .ipynb_checkpoints/
 *.rctwin
+site/
+/docs

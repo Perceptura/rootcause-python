@@ -1,3 +1,5 @@
+"""The causal graph handle: inspect structure, pin domain knowledge, train a twin."""
+
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:

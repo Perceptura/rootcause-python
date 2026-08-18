@@ -32,6 +32,12 @@ dependencies = [
 graph = ["networkx>=3.0"]
 jupyter = ["anywidget>=0.9"]
 dev = ["pytest>=8.0", "pytest-httpx>=0.30"]
+docs = [
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.27",
+    "ruff",  # mkdocstrings uses it to format the separated signatures
+]
 
 [project.urls]
 Homepage = "https://rootcause.ai"

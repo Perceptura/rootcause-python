@@ -1,3 +1,5 @@
+"""The workspace semantic layer: concepts, and the query engine over them."""
+
 import difflib
 from typing import TYPE_CHECKING, Any
 
