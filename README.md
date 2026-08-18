@@ -96,8 +96,10 @@ is patched in CI at build time, so don't bother bumping it by hand.
    git tag 0.2.0 && git push origin 0.2.0
    ```
 
-2. The `build` job builds the sdist + wheel and runs `twine check --strict`.
-3. Trigger the `publish` job (manual) to release to PyPI.
+2. `build` builds the sdist + wheel and runs `twine check --strict`.
+3. `publish` uploads to PyPI automatically — no manual gate. Pushing the tag is the release.
+
+Branch pipelines on the default branch still build (as a sanity check) but never publish.
 
 ### Required CI variable
 
