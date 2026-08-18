@@ -215,7 +215,8 @@ class UpdateResult:
 
     def __repr__(self) -> str:
         rows = f", rows={self.rows_assimilated}" if self.rows_assimilated is not None else ""
-        return f"UpdateResult(status={self.status!r}{rows})"
+        why = f", reasons={self.reasons[0]!r}" if self.retrain_required and self.reasons else ""
+        return f"UpdateResult(status={self.status!r}{rows}{why})"
 
 
 class ScoreResult:

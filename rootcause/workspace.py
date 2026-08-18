@@ -178,21 +178,53 @@ class Connector:
     def name(self) -> str:
         return str(self.doc.get("name", self.id))
 
+    def test(self) -> dict[str, Any]:
+        """Validate that the stored credentials can reach the external system."""
+        envelope = self._transport.request("POST", f"/api/v1/connectors/{self.id}/test")
+        return envelope.get("data", envelope)
+
     def browse(self, level: str, **context: str) -> Any:
         envelope = self._transport.request(
             "GET", f"/api/v1/connectors/{self.id}/browse", params={"level": level, **context}
         )
         return envelope.get("data", envelope)
 
-    def import_table(self, table: str, *, config: dict[str, Any] | None = None, timeout: float = 3600.0) -> Source:
-        """Import one table into the workspace; config= overrides the connector-specific payload."""
-        return self.run_import(config or {"tables": [table]}, timeout=timeout)
+    def query(self, query: str, *, limit: int = 100, **config: Any) -> "pd.DataFrame":
+        """Run a custom query against the external system and return sample rows.
 
-    def run_import(self, config: dict[str, Any], *, timeout: float = 3600.0) -> Source:
+        The authoring loop for custom SQL: nothing is stored, database errors
+        come back verbatim. Extra kwargs (database=, warehouse=, schema=, …)
+        join the connector config.
+        """
+        import pandas as pd
+
+        envelope = self._transport.request(
+            "POST",
+            f"/api/v1/connectors/{self.id}/preview-query",
+            json_body={"config": {"query": query, **config}, "limit": limit},
+        )
+        data = envelope.get("data", envelope)
+        if not data.get("success", False):
+            raise RootCauseError(f"Query preview failed: {data.get('error', 'unknown error')}")
+        columns = [c["name"] for c in data.get("columns", [])]
+        return pd.DataFrame(data.get("rows", []), columns=columns)
+
+    def import_table(self, table: str, *, name: str | None = None, timeout: float = 3600.0, **config: Any) -> Source:
+        """Import one table into the workspace as a new source."""
+        return self.run_import({"table": table, **config}, dataset_name=name, timeout=timeout)
+
+    def import_query(self, query: str, *, name: str | None = None, timeout: float = 3600.0, **config: Any) -> Source:
+        """Import the result of a custom query into the workspace as a new source."""
+        return self.run_import({"query": query, **config}, dataset_name=name, timeout=timeout)
+
+    def run_import(self, config: dict[str, Any], *, dataset_name: str | None = None, timeout: float = 3600.0) -> Source:
+        body: dict[str, Any] = {"workspaceId": self._workspace_id, "config": config}
+        if dataset_name:
+            body["datasetName"] = dataset_name
         envelope = self._transport.request(
             "POST",
             f"/api/v1/connectors/{self.id}/import",
-            json_body={"workspaceId": self._workspace_id, "config": config},
+            json_body=body,
         )
         job_id = str(envelope["data"]["jobId"])
         job = poll_job(self._transport, self._workspace_id, job_id, label=f"import {self.name}", timeout=timeout)
@@ -258,6 +290,16 @@ class Workspace:
         collection = _Collection(fetch, lambda doc: Connector(self._transport, self.id, doc))
         collection.kind = "connector"
         return collection
+
+    def add_connector(self, name: str, type: str, **credentials: Any) -> Connector:
+        """Register a connector to an external system (credentials are stored encrypted)."""
+        envelope = self._transport.request(
+            "POST",
+            "/api/v1/connectors",
+            json_body={"name": name, "type": type, "credentials": {"type": type, **credentials} if credentials else None},
+        )
+        doc = envelope.get("data", envelope)
+        return Connector(self._transport, self.id, doc)
 
     def dataset(self, needle: str) -> DataView:
         return self.datasets[needle]
