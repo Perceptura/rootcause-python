@@ -109,21 +109,29 @@ def render_class(obj: griffe.Class, level: int) -> list[str]:
     init = obj.members.get("__init__")
     if isinstance(init, griffe.Function) and init.docstring is not None:
         lines += ["```python", signature(init).replace("__init__", obj.name), "```", "", docstring(init), ""]
+
+    # griffe models @property as an Attribute labelled "property", not as a
+    # Function, so properties have to be collected separately or they vanish.
+    properties = [
+        member
+        for name, member in obj.members.items()
+        if is_public(name) and isinstance(member, griffe.Attribute) and "property" in member.labels
+    ]
+    if properties:
+        lines += [f"{'#' * (level + 1)} Properties", ""]
+        for prop in sorted(properties, key=lambda m: m.lineno or 0):
+            annotation = f" (`{prop.annotation}`)" if prop.annotation is not None else ""
+            summary = prop.docstring.value.strip().splitlines()[0] if prop.docstring else ""
+            bullet = f"- **{prop.name}**{annotation}"
+            lines.append(f"{bullet}: {summary}" if summary else bullet)
+        lines.append("")
+
     methods = [
         member
         for name, member in obj.members.items()
         if is_public(name) and isinstance(member, griffe.Function)
     ]
-    properties = [m for m in methods if "property" in {str(d.value) for d in m.decorators}]
-    plain = [m for m in methods if m not in properties]
-    if properties:
-        lines += [f"{'#' * (level + 1)} Properties", ""]
-        for prop in sorted(properties, key=lambda m: m.lineno or 0):
-            summary = docstring(prop).splitlines()[0] if prop.docstring else ""
-            annotation = f": {prop.returns}" if prop.returns is not None else ""
-            lines.append(f"- `{prop.name}{annotation}` {summary}".rstrip())
-        lines.append("")
-    for method in sorted(plain, key=lambda m: m.lineno or 0):
+    for method in sorted(methods, key=lambda m: m.lineno or 0):
         lines += render_function(method, f"{obj.name}.", level + 1)
     return lines
 

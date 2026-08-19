@@ -46,9 +46,13 @@ _session: dict[str, Transport | None] = {"transport": None}
 def login(api_key: str | None = None, base_url: str | None = None) -> None:
     """Authenticate the module-level session.
 
-    Resolution order: explicit api_key → ROOTCAUSE_API_KEY (with
-    ROOTCAUSE_BASE_URL) → cached OAuth token in ~/.rootcause → interactive
-    browser login (PKCE; prints a URL to paste a code from on remote kernels).
+    Credentials resolve in order:
+
+    1. an explicit `api_key` argument,
+    2. `ROOTCAUSE_API_KEY`, paired with `ROOTCAUSE_BASE_URL`,
+    3. a cached OAuth token in `~/.rootcause`,
+    4. an interactive browser login (PKCE; on a remote kernel it prints a URL
+       to paste a code back from).
     """
     if _session["transport"] is not None:
         _session["transport"].close()
