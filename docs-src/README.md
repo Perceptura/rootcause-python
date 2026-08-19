@@ -13,7 +13,8 @@ relative for GitBook.
 
 - `sdk-getting-started.md` is the top page: what the SDK is, plus the quickstart.
 - The API reference is not here: `scripts/generate_gitbook_reference.py` builds
-  it from the docstrings on every pipeline run and publishes it as
-  `sdk-api-reference.md`, the path the hand-written page used to occupy. Its
-  argument tables come from the `Args:` sections in the SDK's own docstrings, so
-  edit those rather than the page.
+  it from the docstrings on every pipeline run. It publishes a landing page at
+  `sdk-api-reference.md`, the path the hand-written page used to occupy, plus one
+  page per module under `sdk-reference/`. The argument tables come from the
+  `Args:` sections in the SDK's own docstrings, so edit those rather than the
+  output.

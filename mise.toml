@@ -47,8 +47,8 @@ depends = ["docs:pages"]
 run = "uv run --extra docs mkdocs build --strict"
 
 [tasks."docs:reference"]
-description = "Generate the GitBook markdown API reference into build/ for review"
-run = "uv run --extra docs python scripts/generate_gitbook_reference.py --output build/sdk-generated-reference.md"
+description = "Build the GitBook markdown API reference into build/ for review"
+run = "uv run --extra docs python scripts/generate_gitbook_reference.py --output-dir build/reference"
 
 [tasks.build]
 description = "Build the sdist and wheel into dist/"

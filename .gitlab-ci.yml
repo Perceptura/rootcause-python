@@ -13,11 +13,13 @@ variables:
   # docs-src/ publish here under their own filenames, which is why those
   # filenames match: the relative links between them resolve unchanged.
   DOCS_REPO_DIR: api
-  # The generated reference publishes at the path the hand-written one used, so
-  # its URL and its SUMMARY.md nav entry carry over untouched.
+  # The reference landing page keeps the path the hand-written one used, so its
+  # URL and its SUMMARY.md nav entry carry over untouched. The per-module pages
+  # nest under it, in the directory below.
   DOCS_PAGE_PATH: api/sdk-api-reference.md
   DOCS_PAGE_TITLE: Python API Reference
-  # The interim page the generated reference lived at before it took over above.
+  DOCS_PAGES_DIR: api/sdk-reference
+  # The interim page the reference lived at before it took over above.
   DOCS_RETIRED_PAGE: api/sdk-generated-reference.md
 
 generate:
@@ -90,7 +92,7 @@ docs:
     # --strict is a cheap gate: a broken cross-reference or a page missing from
     # the nav fails here rather than shipping a hole in the reference.
     - mkdocs build --strict
-    - python scripts/generate_gitbook_reference.py --output "$CI_PROJECT_DIR/generated-docs/$(basename $DOCS_PAGE_PATH)"
+    - python scripts/generate_gitbook_reference.py --output-dir "$CI_PROJECT_DIR/generated-docs"
   artifacts:
     paths:
       - site/
@@ -126,11 +128,26 @@ docs:publish:
     # here disappears there instead of lingering forever. Every other page in the
     # docs repo is left exactly as it is.
     - rm -f "/tmp/docs-repo/$DOCS_REPO_DIR"/sdk-*.md
+    - rm -rf "/tmp/docs-repo/$DOCS_PAGES_DIR"
     - cp docs-src/sdk-*.md "/tmp/docs-repo/$DOCS_REPO_DIR/"
     - cp "generated-docs/$(basename $DOCS_PAGE_PATH)" "/tmp/docs-repo/$DOCS_PAGE_PATH"
-    - ls -l "/tmp/docs-repo/$DOCS_REPO_DIR"/sdk-*.md
+    - cp -r "generated-docs/$(basename $DOCS_PAGES_DIR)" "/tmp/docs-repo/$DOCS_PAGES_DIR"
+    - ls -l "/tmp/docs-repo/$DOCS_REPO_DIR"/sdk-*.md "/tmp/docs-repo/$DOCS_PAGES_DIR"
     - python scripts/sync_gitbook_summary.py /tmp/docs-repo/SUMMARY.md --target "$DOCS_PAGE_PATH" --title "$DOCS_PAGE_TITLE"
     - python scripts/sync_gitbook_summary.py /tmp/docs-repo/SUMMARY.md --target "$DOCS_RETIRED_PAGE" --remove
+    # One nav entry per module page, nested under the landing page. The titles
+    # match the headings the generator writes.
+    - >
+      python scripts/sync_gitbook_summary.py /tmp/docs-repo/SUMMARY.md --target "$DOCS_PAGE_PATH"
+      --child "$DOCS_PAGES_DIR/module-functions.md|Module functions"
+      --child "$DOCS_PAGES_DIR/workspaces.md|Workspaces and data"
+      --child "$DOCS_PAGES_DIR/twin.md|Twin"
+      --child "$DOCS_PAGES_DIR/graph.md|Graph"
+      --child "$DOCS_PAGES_DIR/results.md|Results"
+      --child "$DOCS_PAGES_DIR/ontology.md|Ontology"
+      --child "$DOCS_PAGES_DIR/interventions.md|Interventions"
+      --child "$DOCS_PAGES_DIR/notebook-apps.md|Notebook apps"
+      --child "$DOCS_PAGES_DIR/exceptions.md|Exceptions"
     - cd /tmp/docs-repo
     - git add -A "$DOCS_REPO_DIR" SUMMARY.md
     # Print what actually differs, so an empty result is visibly "identical" and

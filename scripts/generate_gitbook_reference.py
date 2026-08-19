@@ -1,16 +1,16 @@
-"""Generate the GitBook API reference page for rootcause-sdk from the source.
+"""Build the GitBook API reference for rootcause-sdk from the source.
 
 GitBook renders markdown out of a git repo, so the built mkdocs HTML site is no
 use to it. This script walks the package with griffe (the same static analyser
-mkdocstrings uses, so no import side effects at build time) and emits one
-GitBook-flavoured markdown page: signatures from the type annotations, prose
-from the google-style docstrings.
+mkdocstrings uses, so no import side effects at build time) and writes
+GitBook-flavoured markdown: signatures from the type annotations, prose from the
+google-style docstrings.
 
-    python scripts/generate_gitbook_reference.py --output api/sdk-generated-reference.md
+    python scripts/generate_gitbook_reference.py --output-dir build/reference
 
-The output is machine-written and meant to be overwritten wholesale on every
-release; the hand-written reference page in the docs repo is a separate file and
-is never touched by this script.
+One page per module, plus a landing page that links to them. The pages are
+machine-written and overwritten wholesale on every release; edit the docstrings
+or this script, never the output.
 """
 
 import argparse
@@ -21,7 +21,11 @@ import griffe
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-TITLE = "Python SDK: Generated API Reference"
+TITLE = "Python SDK: API Reference"
+INDEX_NAME = "sdk-api-reference.md"
+
+# Where the per-module pages sit, relative to the landing page's own directory.
+PAGES_DIR = "sdk-reference"
 
 REPO_URL = "https://gitlab.com/perceptura/sdks/rootcause-python"
 BANNER = (
@@ -33,17 +37,18 @@ BANNER = (
     "-->"
 )
 
-# (heading, module path, blurb). Order is the reading order of the page.
-SECTIONS: list[tuple[str, str, str]] = [
-    ("Module functions", "rootcause", "The module-level session and the direct-mode entry points."),
-    ("Workspaces and data", "rootcause.workspace", "Workspaces and what lives in them: sources, data views, connectors."),
-    ("Twin", "rootcause.twin", "Digital twins: forecast, simulate, intervene, score, update."),
-    ("Graph", "rootcause.graph", "Discovered causal graphs, and the domain knowledge pinned onto them."),
-    ("Results", "rootcause.results", "The result objects twin operations hand back."),
-    ("Ontology", "rootcause.ontology", "Ontology concepts and queries over them."),
-    ("Interventions", "rootcause.interventions", "The intervention and metric helpers."),
-    ("Notebook apps", "rootcause.jupyter", "Notebook host for the platform's interactive app bundles. Requires the `jupyter` extra."),
-    ("Exceptions", "rootcause.errors", "The exception hierarchy every call raises from."),
+# (filename stem, heading, module path, blurb). One page each, in reading order.
+# The stems become URL segments under the landing page, so keep them short.
+SECTIONS: list[tuple[str, str, str, str]] = [
+    ("module-functions", "Module functions", "rootcause", "The module-level session and the direct-mode entry points."),
+    ("workspaces", "Workspaces and data", "rootcause.workspace", "Workspaces and what lives in them: sources, data views, connectors."),
+    ("twin", "Twin", "rootcause.twin", "Digital twins: forecast, simulate, intervene, score, update."),
+    ("graph", "Graph", "rootcause.graph", "Discovered causal graphs, and the domain knowledge pinned onto them."),
+    ("results", "Results", "rootcause.results", "The result objects twin operations hand back."),
+    ("ontology", "Ontology", "rootcause.ontology", "Ontology concepts and queries over them."),
+    ("interventions", "Interventions", "rootcause.interventions", "The intervention and metric helpers."),
+    ("notebook-apps", "Notebook apps", "rootcause.jupyter", "Notebook host for the platform's interactive app bundles. Requires the `jupyter` extra."),
+    ("exceptions", "Exceptions", "rootcause.errors", "The exception hierarchy every call raises from."),
 ]
 
 # Internal plumbing that happens not to start with an underscore: used across
@@ -204,7 +209,7 @@ def render_class(obj: griffe.Class, level: int) -> list[str]:
 
 
 def render_module(module: griffe.Module, heading: str, blurb: str, top_level: bool) -> list[str]:
-    lines = [f"## {heading}", "", blurb, ""]
+    lines = [BANNER, "", f"# {heading}", "", blurb, ""]
     members = [
         (name, member)
         for name, member in module.members.items()
@@ -217,50 +222,101 @@ def render_module(module: griffe.Module, heading: str, blurb: str, top_level: bo
         members.sort(key=lambda item: item[1].lineno or 0)
     for name, member in members:
         if isinstance(member, griffe.Function):
-            lines += render_function(member, "rc." if top_level else "", 3)
+            lines += render_function(member, "rc." if top_level else "", 2)
         elif isinstance(member, griffe.Class):
-            lines += render_class(member, 3)
+            lines += render_class(member, 2)
     return lines
 
 
-def build() -> str:
-    package = griffe.load(
-        "rootcause",
-        docstring_parser=griffe.Parser.google,
-        resolve_aliases=True,
-        search_paths=[str(REPO_ROOT)],
-    )
-    lines = [BANNER, "", f"# {TITLE}", ""]
-    # The package docstring carries the conventions that hold across the surface.
-    for section in package.docstring.parsed if package.docstring else []:
-        if section.kind is griffe.DocstringSectionKind.text:
-            lines += [section.value.strip(), ""]
-    for heading, module_path, blurb in SECTIONS:
-        module = package if module_path == "rootcause" else package[module_path.split(".", 1)[1]]
-        lines += render_module(module, heading, blurb, top_level=module_path == "rootcause")
+def anchor_map(package: griffe.Module) -> dict[str, str]:
+    """Which page each cross-reference anchor lives on, keyed by `#anchor`."""
+    targets: dict[str, str] = {}
+    for stem, _heading, module_path, _blurb in SECTIONS:
+        module = resolve(package, module_path)
+        for name, member in module.members.items():
+            if is_public(name) and isinstance(member, griffe.Class):
+                targets[name.lower()] = f"{stem}.md"
+    return targets
+
+
+def resolve(package: griffe.Module, module_path: str) -> griffe.Module:
+    if module_path == "rootcause":
+        return package
+    return package[module_path.split(".", 1)[1]]
+
+
+def repoint(text: str, own_stem: str, targets: dict[str, str]) -> str:
+    """Make same-page anchors point at whichever page now holds the target."""
+    for anchor, page in targets.items():
+        if page == f"{own_stem}.md":
+            continue
+        text = text.replace(f"](#{anchor})", f"]({page}#{anchor})")
+    return text
+
+
+def tidy(lines: list[str]) -> str:
     text = "\n".join(lines)
     while "\n\n\n" in text:
         text = text.replace("\n\n\n", "\n\n")
     return text.rstrip() + "\n"
 
 
+def build() -> dict[str, str]:
+    """The whole reference, as {relative path: markdown}."""
+    package = griffe.load(
+        "rootcause",
+        docstring_parser=griffe.Parser.google,
+        resolve_aliases=True,
+        search_paths=[str(REPO_ROOT)],
+    )
+    targets = anchor_map(package)
+
+    index = [BANNER, "", f"# {TITLE}", ""]
+    # The package docstring carries the conventions that hold across the surface.
+    for section in package.docstring.parsed if package.docstring else []:
+        if section.kind is griffe.DocstringSectionKind.text:
+            index += [section.value.strip(), ""]
+
+    pages: dict[str, str] = {}
+    for stem, heading, module_path, blurb in SECTIONS:
+        rendered = render_module(resolve(package, module_path), heading, blurb, top_level=module_path == "rootcause")
+        pages[f"{PAGES_DIR}/{stem}.md"] = repoint(tidy(rendered), stem, targets)
+        index.append(f"- [{heading}]({PAGES_DIR}/{stem}.md): {blurb}")
+    index.append("")
+
+    pages[INDEX_NAME] = tidy(index)
+    return pages
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", "-o", type=Path, required=True, help="Path to write the markdown page to.")
-    parser.add_argument("--check", action="store_true", help="Exit non-zero when the output would change.")
+    parser.add_argument(
+        "--output-dir", "-o", type=Path, required=True,
+        help="Directory to write the landing page and the per-module pages into.",
+    )
+    parser.add_argument("--check", action="store_true", help="Exit non-zero when any page would change.")
     args = parser.parse_args()
 
-    rendered = build()
+    pages = build()
     if args.check:
-        current = args.output.read_text() if args.output.exists() else ""
-        if current != rendered:
-            print(f"{args.output} is stale; regenerate it.", file=sys.stderr)
+        stale = [
+            relative
+            for relative, text in pages.items()
+            if not (args.output_dir / relative).exists()
+            or (args.output_dir / relative).read_text() != text
+        ]
+        if stale:
+            print(f"Stale: {', '.join(sorted(stale))}", file=sys.stderr)
             return 1
-        print(f"{args.output} is up to date.")
+        print(f"All {len(pages)} pages are up to date.")
         return 0
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(rendered)
-    print(f"Wrote {args.output} ({len(rendered.splitlines())} lines)")
+
+    for relative, text in sorted(pages.items()):
+        path = args.output_dir / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    total = sum(len(text.splitlines()) for text in pages.values())
+    print(f"Wrote {len(pages)} pages ({total} lines) into {args.output_dir}")
     return 0
 
 

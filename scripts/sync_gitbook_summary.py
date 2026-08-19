@@ -55,16 +55,63 @@ def remove(summary: Path, target: str) -> bool:
     return True
 
 
+def set_children(summary: Path, parent: str, children: list[tuple[str, str]]) -> bool:
+    """Replace the nested entries under a parent page. Returns True when changed.
+
+    GitBook derives both the navigation and the child URLs from this nesting, so
+    the whole block is rewritten: a page that no longer exists loses its entry
+    instead of leaving a dead link in the sidebar.
+    """
+    with summary.open(newline="") as handle:
+        raw = handle.read()
+    newline = "\r\n" if "\r\n" in raw else "\n"
+    lines = raw.splitlines()
+
+    for index, line in enumerate(lines):
+        if f"({parent})" not in line:
+            continue
+        indent = len(line) - len(line.lstrip())
+        end = index + 1
+        while end < len(lines) and lines[end].strip() and (len(lines[end]) - len(lines[end].lstrip())) > indent:
+            end += 1
+        wanted = [f"{' ' * (indent + 2)}* [{title}]({path})" for path, title in children]
+        if lines[index + 1:end] == wanted:
+            return False
+        lines[index + 1:end] = wanted
+        with summary.open("w", newline="") as handle:
+            handle.write(newline.join(lines) + newline)
+        return True
+
+    raise SystemExit(f"Could not find an entry for {parent} in {summary}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("summary", type=Path, help="Path to the docs repo's SUMMARY.md")
     parser.add_argument("--target", required=True, help="Repo-relative path of the generated page")
-    parser.add_argument("--title", default="Generated API Reference", help="Nav title for the page")
+    parser.add_argument("--title", default="Python API Reference", help="Nav title for the page")
     parser.add_argument(
         "--remove", action="store_true",
         help="Drop the entry for a retired page instead of ensuring it exists.",
     )
+    parser.add_argument(
+        "--child", action="append", default=[], metavar="PATH|TITLE",
+        help="A page to nest under --target. Repeatable; the whole child block is replaced.",
+    )
     args = parser.parse_args()
+
+    if args.child:
+        children = []
+        for spec in args.child:
+            path, _, title = spec.partition("|")
+            if not title:
+                raise SystemExit(f'--child needs "path|Title", got "{spec}"')
+            children.append((path, title))
+        if set_children(args.summary, args.target, children):
+            print(f"Nested {len(children)} pages under {args.target} in {args.summary}")
+        else:
+            print(f"The {len(children)} pages under {args.target} are already listed")
+        return 0
 
     if args.remove:
         if remove(args.summary, args.target):
