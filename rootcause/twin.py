@@ -295,25 +295,50 @@ class Twin:
         rows = payload.get("environments", []) if isinstance(payload, dict) else []
         return pd.DataFrame(rows)
 
-    def env(self, *environments: "str | dict[str, str]") -> "EnvSubset":
+    def env(
+        self,
+        *environments: "str | dict[str, str]",
+        where: "list[tuple] | dict[str, Any] | None" = None,
+    ) -> "EnvSubset":
         """A handle pinned to a subset of this panel twin's environments.
 
-        Pass environment names ("london"), envKeys ("store=london"), or exact
-        {column: value} combos. Everything on the handle — graph, sample,
-        intervene, forecast — is scoped to the subset.
+        Name them directly — environment names ("london"), envKeys, or exact
+        {column: value} combos — or select them by data with where=, filtering
+        on any twin column through per-environment statistics:
+
+        ```python
+        twin.env("london", "berlin")                       # by name
+        twin.env(where=[("revenue", "avg", ">", 400)])     # by aggregate
+        twin.env(where=[("region", "==", "EMEA"),          # constant column
+                        ("demand", "min", ">=", 0)])       # AND of filters
+        ```
+
+        Everything on the handle — graph, environments, sample, intervene,
+        forecast — is scoped to the subset.
 
         Args:
             *environments: Environment names, envKeys, or `{column: value}`
                 combos.
+            where: Stat filters instead of names — tuples of
+                `(column, op, value)` for constant-per-environment columns, or
+                `(column, reduce, op, value)` with reduce one of `avg`/`mean`,
+                `min`, `max`, or `any` (at least one matching row). A dict
+                filter group passes through as written.
 
         Returns:
             An [`EnvSubset`](#envsubset) pinned to those environments.
 
         Raises:
-            RootCauseError: No environment was passed.
+            RootCauseError: Neither (or both) selection styles were passed.
         """
+        if environments and where is not None:
+            raise RootCauseError("Pass environments or where=, not both")
+        if where is not None:
+            return EnvSubset(self, [], stat_filters=_compile_env_where(where))
         if not environments:
-            raise RootCauseError("Pass at least one environment, e.g. twin.env(\"london\", \"berlin\")")
+            raise RootCauseError(
+                'Pass at least one environment (twin.env("london")) or a where= filter'
+            )
         return EnvSubset(self, list(environments))
 
     def score(
@@ -622,6 +647,59 @@ class Twin:
         return f"<div><p><b>{self.name}</b></p><table>{rows}</table></div>"
 
 
+_ENV_REDUCERS = {"value": "value", "avg": "mean", "mean": "mean", "min": "min", "max": "max", "any": "any"}
+
+# The engine's operator vocabulary is the UI's label strings; symbols map onto them.
+_ENV_OPERATORS = {
+    "==": "equal to", "=": "equal to", "eq": "equal to", "equal to": "equal to",
+    "!=": "Not Equal to", "<>": "Not Equal to", "neq": "Not Equal to", "Not Equal to": "Not Equal to",
+    "<": "Less than", "lt": "Less than", "Less than": "Less than",
+    ">": "Greater than", "gt": "Greater than", "Greater than": "Greater than",
+    "<=": "Less than or equal to", "lte": "Less than or equal to",
+    "Less than or equal to": "Less than or equal to",
+    ">=": "Greater than or equal to", "gte": "Greater than or equal to",
+    "Greater than or equal to": "Greater than or equal to",
+    "contains": "Contains", "Contains": "Contains",
+    "is empty": "Is Empty", "Is Empty": "Is Empty",
+    "not empty": "Is not Empty", "Is not Empty": "Is not Empty",
+}
+
+
+def _compile_env_where(where: "list[tuple] | dict[str, Any]") -> dict[str, Any]:
+    """Tuples -> the engine's stat-filter group; dicts pass through as written."""
+    if isinstance(where, dict):
+        return where
+    filters: list[dict[str, Any]] = []
+    for item in where:
+        if not isinstance(item, tuple) or len(item) not in (3, 4):
+            raise RootCauseError(
+                "where= items are (column, op, value) or (column, reduce, op, value) tuples"
+            )
+        if len(item) == 3:
+            column, op, value = item
+            reduce = "value"
+        else:
+            column, reduce, op, value = item
+            if reduce not in _ENV_REDUCERS:
+                raise RootCauseError(
+                    f'Unknown reduce "{reduce}"; one of {sorted(set(_ENV_REDUCERS))}'
+                )
+            reduce = _ENV_REDUCERS[reduce]
+        operator = _ENV_OPERATORS.get(str(op))
+        if operator is None:
+            raise RootCauseError(
+                f'Unknown operator "{op}"; use ==, !=, <, >, <=, >=, contains, '
+                f'"is empty", or "not empty"'
+            )
+        filters.append({
+            "column": column,
+            "reduce": reduce,
+            "comparisonOperator": operator,
+            "value": value,
+        })
+    return {"booleanOperator": "AND", "filters": filters}
+
+
 class EnvSubset:
     """A panel twin pinned to a subset of its environments.
 
@@ -630,9 +708,57 @@ class EnvSubset:
     forecast delegate to the twin with environments= filled in.
     """
 
-    def __init__(self, twin: Twin, environments: list["str | dict[str, str]"]) -> None:
+    def __init__(
+        self,
+        twin: Twin,
+        environments: list["str | dict[str, str]"],
+        stat_filters: dict[str, Any] | None = None,
+    ) -> None:
         self.twin = twin
         self._requested = environments
+        self._stat_filters = stat_filters
+        self._resolved: dict[str, Any] | None = None
+
+    def _resolve_filters(self) -> dict[str, Any]:
+        if self._resolved is None:
+            envelope = self.twin._transport.request(
+                "POST",
+                f"{self.twin._version_path()}/environments/resolve",
+                json_body={"statFilters": self._stat_filters},
+            )
+            self._resolved = envelope.get("data", envelope)
+        return self._resolved
+
+    @property
+    def environments(self) -> "pd.DataFrame":
+        """The environments this handle covers, resolved to a DataFrame.
+
+        For where= handles the stat filters run server-side; the frame carries
+        envKey plus one column per environment column, with totalEnvCount and
+        sampleSize in `frame.attrs`.
+        """
+        import pandas as pd
+
+        if self._stat_filters is not None:
+            resolved = self._resolve_filters()
+            rows = [
+                {"envKey": key, **combo}
+                for key, combo in zip(resolved.get("envKeys") or [], resolved.get("environments") or [])
+            ]
+            frame = pd.DataFrame(rows)
+            frame.attrs["totalEnvCount"] = resolved.get("totalEnvCount")
+            frame.attrs["sampleSize"] = resolved.get("sampleSize")
+            return frame
+        combos = self.combos()
+        payload = self._listing()
+        columns = [str(c) for c in (payload.get("environmentColumns") or [])]
+        rows = []
+        for entry in payload.get("environments") or []:
+            values = [str(v) for v in (entry.get("values") or [])]
+            combo = dict(zip(columns, values))
+            if combo in combos:
+                rows.append({"envKey": entry.get("envKey"), "sampleSize": entry.get("sampleSize"), **combo})
+        return pd.DataFrame(rows)
 
     def _listing(self) -> dict[str, Any]:
         envelope = self.twin._transport.request("GET", f"{self.twin._version_path()}/environments")
@@ -645,6 +771,8 @@ class EnvSubset:
         The listing carries each environment's values as a list ordered by
         environmentColumns; zipping the two recovers the combo.
         """
+        if self._stat_filters is not None:
+            return [dict(c) for c in (self._resolve_filters().get("environments") or [])]
         payload: dict[str, Any] | None = None
         resolved: list[dict[str, str]] = []
         for item in self._requested:
@@ -673,6 +801,8 @@ class EnvSubset:
         return resolved
 
     def _names(self) -> list[str]:
+        if self._stat_filters is not None:
+            return [str(k) for k in (self._resolve_filters().get("envKeys") or [])]
         names: list[str] = []
         for item in self._requested:
             if isinstance(item, dict):
@@ -748,6 +878,11 @@ class EnvSubset:
         )
 
     def __repr__(self) -> str:
+        if self._stat_filters is not None:
+            if self._resolved is not None:
+                matched = len(self._resolved.get("envKeys") or [])
+                return f"EnvSubset({self.twin.name!r}, where-matched={matched})"
+            return f"EnvSubset({self.twin.name!r}, where=<unresolved>)"
         labels = ", ".join(
             "/".join(item.values()) if isinstance(item, dict) else str(item) for item in self._requested
         )

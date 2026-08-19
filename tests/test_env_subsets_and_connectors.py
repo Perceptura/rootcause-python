@@ -144,3 +144,75 @@ def test_import_query_sends_flat_config_and_name(api, transport):
     body = api.body_of("POST", "/import")
     assert body["config"] == {"query": "SELECT * FROM sales"}
     assert body["datasetName"] == "sales-2026"
+
+
+RESOLVED = {"data": {
+    "environmentColumns": ["store"],
+    "environments": [{"store": "london"}, {"store": "berlin"}],
+    "envKeys": ["london", "berlin"],
+    "sampleSize": 60,
+    "totalEnvCount": 3,
+}}
+
+
+def test_env_where_compiles_tuples_and_resolves_server_side(api, transport):
+    api.on("POST", f"/api/v1/workspaces/{WS}/digital-twins/tw1/versions/v1/environments/resolve", RESOLVED)
+
+    subset = _twin(transport).env(where=[("revenue", "avg", ">", 400), ("region", "==", "EMEA")])
+    frame = subset.environments
+
+    body = api.body_of("POST", "/environments/resolve")
+    assert body["statFilters"]["booleanOperator"] == "AND"
+    assert body["statFilters"]["filters"] == [
+        {"column": "revenue", "reduce": "mean", "comparisonOperator": "Greater than", "value": 400},
+        {"column": "region", "reduce": "value", "comparisonOperator": "equal to", "value": "EMEA"},
+    ]
+    assert list(frame["envKey"]) == ["london", "berlin"]
+    assert frame.attrs["totalEnvCount"] == 3
+
+
+def test_env_where_scopes_simulations_to_the_matches(api, transport):
+    api.on("POST", f"/api/v1/workspaces/{WS}/digital-twins/tw1/versions/v1/environments/resolve", RESOLVED)
+    api.on("POST", f"/api/v1/workspaces/{WS}/simulations", {"data": {"runId": "r1"}})
+    api.on("GET", f"/api/v1/workspaces/{WS}/simulations/r1", {"data": {"status": "completed"}})
+
+    _twin(transport).env(where=[("revenue", "avg", ">", 400)]).intervene(
+        {"price": {"type": "percentage", "value": -10}}, outcomes=["revenue"])
+
+    body = api.body_of("POST", "/simulations")
+    assert body["scenario"]["environments"] == ["london", "berlin"]
+
+
+def test_env_where_feeds_the_graph_slice_with_resolved_combos(api, transport):
+    api.on("POST", f"/api/v1/workspaces/{WS}/digital-twins/tw1/versions/v1/environments/resolve", RESOLVED)
+    api.on("POST", f"/api/v1/workspaces/{WS}/digital-twins/tw1/versions/v1/graph/slice",
+           {"data": {"causalGraph": [], "nodes": [], "envCount": 2}})
+
+    _twin(transport).env(where=[("revenue", "avg", ">", 400)]).graph
+
+    body = api.body_of("POST", "/graph/slice")
+    assert body["mode"] == "environments"
+    assert body["environments"] == [{"store": "london"}, {"store": "berlin"}]
+
+
+def test_env_rejects_names_and_where_together(api, transport):
+    with pytest.raises(RootCauseError):
+        _twin(transport).env("london", where=[("revenue", "avg", ">", 400)])
+
+
+def test_env_where_rejects_malformed_tuples(api, transport):
+    with pytest.raises(RootCauseError):
+        _twin(transport).env(where=[("revenue", ">")])
+    with pytest.raises(RootCauseError):
+        _twin(transport).env(where=[("revenue", "median", ">", 400)])
+    with pytest.raises(RootCauseError):
+        _twin(transport).env(where=[("revenue", "avg", "~=", 400)])
+
+
+def test_named_subset_environments_frame(api, transport):
+    api.on("GET", f"/api/v1/workspaces/{WS}/digital-twins/tw1/versions/v1/environments", ENV_LISTING)
+
+    frame = _twin(transport).env("london").environments
+
+    assert list(frame["envKey"]) == ["london"]
+    assert list(frame["store"]) == ["london"]
