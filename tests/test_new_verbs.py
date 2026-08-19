@@ -230,3 +230,40 @@ def test_retrain_is_new_version_plus_train(api, transport):
     trained = _twin(transport).retrain()
 
     assert trained.version_id == "v2"
+
+
+def test_roles_reads_the_variable_roles(api, transport):
+    api.on("GET", "/api/v1/workspaces/ws1/digital-twins/tw1/versions/v1/variable-roles",
+           {"data": {"sources": ["price"], "targets": ["revenue"]}})
+    assert _twin(transport).roles == {"sources": ["price"], "targets": ["revenue"]}
+
+
+def test_set_roles_merges_the_unspecified_side(api, transport):
+    twin = _twin(transport)
+    twin._version_doc = {**VERSION, "inputFields": [
+        {"field": "price"}, {"field": "demand"}, {"field": "revenue"}]}
+    api.on("GET", "/api/v1/workspaces/ws1/digital-twins/tw1/versions/v1/variable-roles",
+           {"data": {"sources": ["price", "demand"], "targets": ["demand"]}})
+    api.on("PUT", "/api/v1/workspaces/ws1/digital-twins/tw1/versions/v1/variable-roles",
+           {"data": {"sources": ["price", "demand"], "targets": ["revenue"]}})
+    api.on("GET", "/api/v1/workspaces/ws1/digital-twins/tw1/versions/v1", {"data": dict(VERSION)})
+
+    stored = twin.set_roles(targets=["revenue"])
+
+    body = api.body_of("PUT", "/variable-roles")
+    assert body == {"sources": ["price", "demand"], "targets": ["revenue"]}
+    assert stored["targets"] == ["revenue"]
+
+
+def test_set_roles_rejects_unknown_variables(api, transport):
+    twin = _twin(transport)
+    twin._version_doc = {**VERSION, "inputFields": [{"field": "price"}, {"field": "revenue"}]}
+    with pytest.raises(RootCauseError) as exc:
+        twin.set_roles(targets=["revenu"], sources=["price"])
+    assert "revenu" in str(exc.value)
+    assert "revenue" in str(exc.value)
+
+
+def test_set_roles_requires_something(api, transport):
+    with pytest.raises(RootCauseError):
+        _twin(transport).set_roles()

@@ -206,6 +206,53 @@ class Twin:
         return fresh.train(timeout=timeout)
 
     @property
+    def roles(self) -> dict[str, Any]:
+        """The version's variable roles: which variables are sources and which are targets.
+
+        Falls back to the platform's suggested roles when none have been set.
+
+        Returns:
+            `{"sources": [...], "targets": [...]}`.
+        """
+        envelope = self._transport.request("GET", f"{self._version_path()}/variable-roles")
+        return envelope.get("data", envelope)
+
+    def set_roles(self, *, targets: list[str] | None = None, sources: list[str] | None = None) -> dict[str, Any]:
+        """Set the version's variable roles ahead of discovery and training.
+
+        Roles steer the causal engine: targets are the outcomes the model is
+        for, sources are the levers. Pass either list to change just that
+        side — the other keeps its current (or suggested) value. This is the
+        per-version counterpart of the ontology-level
+        `concept.override(suggested_role=...)`, which sets the default for
+        every future twin built over that concept.
+
+        Args:
+            targets: Outcome variables.
+            sources: Driver variables.
+
+        Returns:
+            The stored roles document.
+        """
+        if targets is None and sources is None:
+            raise RootCauseError("Pass targets=, sources=, or both")
+        current = self.roles if (targets is None or sources is None) else {}
+        known = {str(f.get("field")) for f in (self.version.get("inputFields") or []) if f.get("field")}
+        wanted = [*(targets or []), *(sources or [])]
+        unknown = [v for v in wanted if known and v not in known]
+        if unknown:
+            raise RootCauseError(
+                f"Unknown variable(s) {unknown}; this version's variables: {sorted(known)}"
+            )
+        body = {
+            "sources": sources if sources is not None else list(current.get("sources") or []),
+            "targets": targets if targets is not None else list(current.get("targets") or []),
+        }
+        envelope = self._transport.request("PUT", f"{self._version_path()}/variable-roles", json_body=body)
+        self._refresh_version()
+        return envelope.get("data", envelope)
+
+    @property
     def update_eligibility(self) -> dict[str, Any]:
         """Whether update() would find new data, and whether it can assimilate incrementally."""
         envelope = self._transport.request("GET", f"{self._version_path()}/update-eligibility")
