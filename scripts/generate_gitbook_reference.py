@@ -106,9 +106,12 @@ def render_docstring(obj: griffe.Object) -> list[str]:
                 )
             lines.append("")
         elif kind is griffe.DocstringSectionKind.returns:
-            for returned in section.value:
-                annotation = f" (`{returned.annotation}`)" if returned.annotation is not None else ""
-                lines += [f"**Returns**{annotation}: {one_line(returned.description)}", ""]
+            # A wrapped Returns: description parses as one entry per line, and a
+            # function returns one thing, so fold them back into a sentence.
+            first = section.value[0]
+            annotation = f" (`{cell(first.annotation)}`)" if first.annotation is not None else ""
+            described = " ".join(one_line(r.description) for r in section.value if r.description)
+            lines += [f"**Returns**{annotation}: {described}", ""]
         elif kind is griffe.DocstringSectionKind.raises:
             lines += ["**Raises**", ""]
             for raised in section.value:

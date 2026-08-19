@@ -99,7 +99,15 @@ class Twin:
         return Graph(self)
 
     def discover(self, *, webhook_url: str | None = None, timeout: float = 3600.0) -> Graph:
-        """Run causal discovery on this version and return the discovered graph."""
+        """Run causal discovery on this version and return the discovered graph.
+
+        Args:
+            webhook_url: Called with the job result instead of waiting on it.
+            timeout: Seconds to wait for the discovery job.
+
+        Returns:
+            The discovered [`Graph`](#graph).
+        """
         body = {"webhookUrl": webhook_url} if webhook_url else None
         envelope = self._transport.request("POST", f"{self._version_path()}/discover", json_body=body)
         job_id = str(envelope["data"]["jobId"])
@@ -114,6 +122,13 @@ class Twin:
         retrains through a new version, not by re-fitting in place. To rebuild
         a model from scratch (after an engine fix, or a corrupt artifact), use
         rc.discover(df, force=True) and train the fresh twin it returns.
+
+        Args:
+            webhook_url: Called with the job result instead of waiting on it.
+            timeout: Seconds to wait for the training job.
+
+        Returns:
+            This twin, trained. An already-trained version comes back unchanged.
         """
         import sys as _sys
 
@@ -132,7 +147,15 @@ class Twin:
         return self
 
     def run_pipeline(self, *, webhook_url: str | None = None, timeout: float = 7200.0) -> "Twin":
-        """Discovery + dependencies + roles + training in one pass."""
+        """Discovery + dependencies + roles + training in one pass.
+
+        Args:
+            webhook_url: Called with the job result instead of waiting on it.
+            timeout: Seconds to wait for the whole pipeline.
+
+        Returns:
+            This twin, trained.
+        """
         body = {"webhookUrl": webhook_url} if webhook_url else None
         envelope = self._transport.request("POST", f"{self._version_path()}/run-pipeline", json_body=body)
         job_id = str(envelope["data"]["jobId"])
@@ -149,6 +172,15 @@ class Twin:
 
         Inherits the base version's configuration and causal graph, resets every
         training output, and returns the twin pinned to the new version.
+
+        Args:
+            bump: Which part of the version number to advance: `patch`, `minor`,
+                or `major`.
+            base_version_id: Version to derive from. Defaults to the latest.
+            dataset_id: Train the new version off a different dataset.
+
+        Returns:
+            A handle bound to the new, untrained version.
         """
         body: dict[str, Any] = {"bump": bump}
         if base_version_id:
@@ -160,7 +192,16 @@ class Twin:
         return self.at_version(str(doc.get("id") or doc.get("_id")))
 
     def retrain(self, *, bump: str = "patch", timeout: float = 7200.0) -> "Twin":
-        """Create a new version off the latest and train it — the full retrain in one call."""
+        """Create a new version off the latest and train it — the full retrain in one call.
+
+        Args:
+            bump: Which part of the version number to advance: `patch`, `minor`,
+                or `major`.
+            timeout: Seconds to wait for the training job.
+
+        Returns:
+            A handle bound to the newly trained version.
+        """
         fresh = self.new_version(bump=bump)
         return fresh.train(timeout=timeout)
 
@@ -179,6 +220,14 @@ class Twin:
         why — call retrain()). Static and temporal twins assimilate out of the
         box; panel twins need the v2 panel engine. Requires a trained version;
         extend or sync the source first so there is something new.
+
+        Args:
+            webhook_url: Called with the job result instead of waiting on it.
+            timeout: Seconds to wait for the update job.
+
+        Returns:
+            An [`UpdateResult`](#updateresult). Never raises on
+            `retrain_required`.
         """
         body: dict[str, Any] = {}
         if webhook_url:
@@ -205,6 +254,16 @@ class Twin:
         Pass environment names ("london"), envKeys ("store=london"), or exact
         {column: value} combos. Everything on the handle — graph, sample,
         intervene, forecast — is scoped to the subset.
+
+        Args:
+            *environments: Environment names, envKeys, or `{column: value}`
+                combos.
+
+        Returns:
+            An [`EnvSubset`](#envsubset) pinned to those environments.
+
+        Raises:
+            RootCauseError: No environment was passed.
         """
         if not environments:
             raise RootCauseError("Pass at least one environment, e.g. twin.env(\"london\", \"berlin\")")
@@ -222,9 +281,20 @@ class Twin:
     ) -> ScoreResult:
         """Score rows against target outcomes: each row gets its smallest flip.
 
-        Static trained twins only. rows is a DataFrame or list of dicts whose
-        keys name twin variables; targets is [{"variable": ..., "value": ...}].
-        Blocks until the run completes and returns the ScoreResult.
+        Static trained twins only. Blocks until the run completes.
+
+        Args:
+            rows: A DataFrame, or a list of dicts whose keys name twin
+                variables.
+            targets: The outcomes to reach, as
+                `[{"variable": ..., "value": ...}]`.
+            max_changes: Most variables any one row is allowed to flip.
+            constraints: Per-variable limits on what may change, and how far.
+            webhook_url: Called with the run result instead of waiting on it.
+            timeout: Seconds to wait for the run.
+
+        Returns:
+            A [`ScoreResult`](#scoreresult) covering every row.
         """
         if hasattr(rows, "to_dict"):
             rows = rows.to_dict(orient="records")  # type: ignore[union-attr]
@@ -248,10 +318,24 @@ class Twin:
     ) -> SampleDraws:
         """Raw joint posterior draws — the primitive every simulation family wraps.
 
-        do= applies interventions before sampling; where= scopes them to a
-        subpopulation. Panel twins sample each environment independently
-        (environments= narrows which) and derive stable per-environment child
-        seeds from seed=.
+        Args:
+            n: Draws per sampling unit.
+            do: Interventions to apply before sampling, as
+                `{"variable": rc.set(value)}`. A bare value means `rc.set`.
+            where: Scope the draws to a subpopulation: `{"region": "EMEA"}` for
+                equality, or `{"income": ("<", 5000)}` with any of
+                `== != > < >= <=`, plus `in` and `not_in`.
+            environments: Panel twins: which environments to sample. Each is
+                sampled independently.
+            seed: Seed for reproducible draws. Panel twins derive stable
+                per-environment child seeds from it.
+
+        Returns:
+            The draws as [`SampleDraws`](#sampledraws).
+
+        Raises:
+            RootCauseError: `environments` was passed for a twin that is not a
+                panel twin.
         """
         interventions = compile_do(do, where) if do else []
         if self.is_panel:
@@ -284,9 +368,28 @@ class Twin:
     ) -> SimulationResult:
         """Run an intervention simulation and block for the result.
 
-        Interventions measure their effect through metrics: pass metrics=[rc.metric(...)]
-        for full control, or outcomes=["revenue"] for mean-of-column metrics. For raw
-        effect distributions without metrics, use twin.sample(do=...).
+        Interventions measure their effect through metrics: pass
+        `metrics=[rc.metric(...)]` for full control, or `outcomes=["revenue"]`
+        for mean-of-column metrics. For raw effect distributions without
+        metrics, use `twin.sample(do=...)`.
+
+        Args:
+            do: The interventions, as `{"variable": rc.set(value)}`. A bare
+                value means `rc.set`; `rc.range(...)` sweeps instead of pinning.
+            where: Scope the intervention to a subpopulation: `{"region":
+                "EMEA"}` for equality, or `{"income": ("<", 5000)}` with any of
+                `== != > < >= <=`, plus `in` and `not_in`.
+            metrics: Metrics to measure the effect through, from `rc.metric()`.
+            outcomes: Column names to measure as mean-of-column metrics, when
+                `metrics` is not given.
+            environments: Panel twins: which environments to simulate.
+            timeout: Seconds to wait for the run.
+
+        Returns:
+            A [`SimulationResult`](#simulationresult).
+
+        Raises:
+            RootCauseError: Neither `metrics` nor `outcomes` was given.
         """
         if metrics is None:
             if not outcomes:
@@ -325,10 +428,23 @@ class Twin:
     ) -> ForecastResult:
         """Forecast `horizon` steps ahead for the target variables.
 
-        Panel twins forecast each environment; environments= narrows which, and
-        aggregate= ("sum", "avg", "min", "max") adds a combined series across
-        them. origin_timestamp (ms epoch) anchors the forecast start, which is
-        how backtests align a forecast against data the twin never saw.
+        Args:
+            horizon: How many steps ahead to forecast.
+            targets: Variables to forecast. Inferred from the twin when omitted.
+            environments: Panel twins: which environments to forecast.
+            confidence: Width of the prediction interval, as a probability.
+            origin_timestamp: Anchor the forecast start (ms epoch). How a
+                backtest aligns a forecast against data the twin never saw.
+            aggregate: Panel twins: add a combined series across environments,
+                one of `sum`, `avg`, `min`, `max`.
+            timeout: Seconds to wait for the run.
+
+        Returns:
+            A [`ForecastResult`](#forecastresult), tidy long format.
+
+        Raises:
+            RootCauseError: The twin is not temporal, or `aggregate` was passed
+                for a twin that is not a panel twin.
         """
         if not self.is_temporal:
             raise RootCauseError(
@@ -351,7 +467,16 @@ class Twin:
         return ForecastResult(self._transport, self._workspace_id, result.run_id, result.run, scenario)
 
     def ask(self, query: str, *, timeout: float = 3600.0) -> SimulationResult:
-        """Natural-language question → generated scenario → executed simulation."""
+        """Natural-language question, turned into a scenario and executed.
+
+        Args:
+            query: The question, in plain language.
+            timeout: Seconds to wait for the run.
+
+        Returns:
+            A [`SimulationResult`](#simulationresult); `result.scenario` is what
+            the translator produced.
+        """
         envelope = self._transport.request(
             "POST", f"{self._version_path()}/scenario-from-query", json_body={"query": query}
         )
@@ -383,7 +508,16 @@ class Twin:
         )
 
     def save(self, path: str | Path, *, include_runs: bool = False, timeout: float = 3600.0) -> Path:
-        """Export this twin (trained params included) as a portable .rctwin zip."""
+        """Export this twin (trained params included) as a portable .rctwin zip.
+
+        Args:
+            path: Where to write the `.rctwin` file.
+            include_runs: Include the simulation run history in the export.
+            timeout: Seconds to wait for the export job.
+
+        Returns:
+            The path written, ready for `rc.load_twin()`.
+        """
         envelope = self._transport.request(
             "POST", f"{self._twin_path()}/export", json_body={"includeRuns": include_runs}
         )
