@@ -40,6 +40,10 @@ run = "uv run --extra docs mkdocs serve"
 description = "Build the docs into site/ and fail on any warning"
 run = "uv run --extra docs mkdocs build --strict"
 
+[tasks."docs:reference"]
+description = "Generate the GitBook markdown API reference into build/ for review"
+run = "uv run --extra docs python scripts/generate_gitbook_reference.py --output build/sdk-generated-reference.md"
+
 [tasks.build]
 description = "Build the sdist and wheel into dist/"
 run = "uv build"

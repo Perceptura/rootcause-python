@@ -36,6 +36,7 @@ docs = [
     "mkdocs>=1.6",
     "mkdocs-material>=9.5",
     "mkdocstrings[python]>=0.27",
+    "griffe>=1.0",  # used directly by scripts/generate_gitbook_reference.py
     "ruff",  # mkdocstrings uses it to format the separated signatures
 ]
 

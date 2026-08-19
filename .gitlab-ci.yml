@@ -5,6 +5,14 @@ stages:
 
 variables:
   PYTHON_IMAGE: python:3.12-slim
+  # The GitBook-backed docs repo. Every variable here has a working default;
+  # only DOCS_PUSH_TOKEN has to exist as a (masked) CI variable.
+  DOCS_REPO_URL: https://gitlab.com/perceptura/public-material/gitbooks-docs.git
+  DOCS_REPO_BRANCH: main
+  # Repo-relative path of the generated page, and its nav title in SUMMARY.md.
+  # The hand-written api/sdk-api-reference.md is never touched.
+  DOCS_PAGE_PATH: api/sdk-generated-reference.md
+  DOCS_PAGE_TITLE: Generated API Reference
 
 generate:
   stage: generate
@@ -60,5 +68,60 @@ publish:
     - pip install twine
     - twine check --strict dist/*
     - twine upload --non-interactive --disable-progress-bar dist/*
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^[0-9]+\.[0-9]+\.[0-9]+([ab]|rc)?[0-9]*$/
+
+docs:
+  stage: build
+  image: $PYTHON_IMAGE
+  script:
+    - pip install --upgrade pip
+    - pip install ".[docs]"
+    # The mkdocs site is not what gets published (GitBook renders markdown), but
+    # --strict is a cheap gate: a broken cross-reference or a page missing from
+    # the nav fails here rather than shipping a hole in the reference.
+    - mkdocs build --strict
+    - python scripts/generate_gitbook_reference.py --output "$CI_PROJECT_DIR/generated-docs/$(basename $DOCS_PAGE_PATH)"
+  artifacts:
+    paths:
+      - site/
+      - generated-docs/
+    expire_in: 30 days
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^[0-9]+\.[0-9]+\.[0-9]+([ab]|rc)?[0-9]*$/
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+docs:publish:
+  stage: publish
+  image: $PYTHON_IMAGE
+  needs:
+    - job: docs
+      artifacts: true
+  environment:
+    name: docs
+    url: https://docs.rootcause.ai/
+  script:
+    - apt-get update -qq && apt-get install -y -qq git
+    # DOCS_PUSH_TOKEN: a project or group access token with write_repository on
+    # the docs repo, set as a masked CI variable. Nothing else needs setting.
+    - test -n "$DOCS_PUSH_TOKEN" || { echo "DOCS_PUSH_TOKEN is not set"; exit 1; }
+    - git config --global user.email "ci@rootcause.ai"
+    - git config --global user.name "rootcause-sdk CI"
+    - AUTHED_URL=$(echo "$DOCS_REPO_URL" | sed -E "s#https://#https://oauth2:$DOCS_PUSH_TOKEN@#")
+    - git clone --depth 1 --branch "$DOCS_REPO_BRANCH" "$AUTHED_URL" /tmp/docs-repo
+    # The generated page is overwritten wholesale; the hand-written reference and
+    # every other page in the docs repo are left exactly as they are.
+    - cp "generated-docs/$(basename $DOCS_PAGE_PATH)" "/tmp/docs-repo/$DOCS_PAGE_PATH"
+    - python scripts/sync_gitbook_summary.py /tmp/docs-repo/SUMMARY.md --target "$DOCS_PAGE_PATH" --title "$DOCS_PAGE_TITLE"
+    - cd /tmp/docs-repo
+    - git add -A "$DOCS_PAGE_PATH" SUMMARY.md
+    - |
+      if git diff --cached --quiet; then
+        echo "Docs unchanged; nothing to push."
+        exit 0
+      fi
+    - git commit -m "docs(python-sdk): reference for ${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}"
+    - git push origin "HEAD:$DOCS_REPO_BRANCH"
   rules:
     - if: $CI_COMMIT_TAG =~ /^[0-9]+\.[0-9]+\.[0-9]+([ab]|rc)?[0-9]*$/
