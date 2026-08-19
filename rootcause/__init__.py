@@ -42,7 +42,15 @@ if TYPE_CHECKING:
     import pandas as pd
     from pathlib import Path
 
-__version__ = "0.2.0"
+# The tag is the version: CI patches pyproject at build time, so the installed
+# distribution's metadata is the one source of truth. Source checkouts that
+# were never built report 0.0.0-dev rather than inventing a number.
+try:
+    from importlib.metadata import version as _dist_version
+
+    __version__ = _dist_version("rootcause-sdk")
+except Exception:
+    __version__ = "0.0.0-dev"
 
 _session: dict[str, Transport | None] = {"transport": None}
 

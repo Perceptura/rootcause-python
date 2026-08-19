@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "rootcause-sdk"
-version = "0.2.0"
+version = "0.0.0"
 description = "Official Python SDK for the RootCause causal AI platform"
 readme = "README.md"
 license = { text = "MIT" }
