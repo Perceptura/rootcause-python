@@ -558,12 +558,19 @@ class Twin:
             raise RootCauseError(f"Could not generate a scenario from that question; response: {data}")
         return self._run_scenario(scenario, timeout=timeout)
 
-    def console(self, *, height: int = 560, theme: str = ""):
+    def console(self, *, height: int = 560, theme: str = "") -> "Any":
         """The interactive causal-graph console under the cell: the same app Claude renders.
 
         Explore edges, type intervention values, and re-run scenarios; every
         control round-trips live through the platform's MCP gateway with this
         session's credentials. Needs: pip install "rootcause-sdk[jupyter]".
+
+        Args:
+            height: Height of the mounted app, in pixels.
+            theme: `light`, `dark`, or empty to follow the notebook.
+
+        Returns:
+            The mounted widget, displayed by the notebook cell.
         """
         from rootcause.jupyter import app
 
@@ -574,6 +581,138 @@ class Twin:
                 "digitalTwinVersionId": self.version_id,
                 "queryType": "graph",
             },
+            height=height,
+            theme=theme,
+            transport=self._transport,
+        )
+
+    def sankey(
+        self,
+        node: str | None = None,
+        *,
+        edge: "tuple[str, str] | None" = None,
+        depth: int = 2,
+        height: int = 520,
+        theme: str = "",
+    ) -> "Any":
+        """The causal-flow Sankey under the cell: how influence propagates through the graph.
+
+        Pass a variable to see everything flowing into and out of it, or an
+        edge to see the paths running through that one link. Needs a resolved
+        or trained graph and: pip install "rootcause-sdk[jupyter]".
+
+        Args:
+            node: Variable to analyse paths around. Exactly one of `node` and
+                `edge` must be given.
+            edge: A `(cause, effect)` pair to analyse paths through.
+            depth: How many hops to traverse on either side.
+            height: Height of the mounted app, in pixels.
+            theme: `light`, `dark`, or empty to follow the notebook.
+
+        Returns:
+            The mounted widget, displayed by the notebook cell.
+        """
+        if (node is None) == (edge is None):
+            raise ValueError("Pass exactly one of node= or edge=(cause, effect).")
+        from rootcause.jupyter import app
+
+        arguments: dict[str, Any] = {
+            "workspaceId": self._workspace_id,
+            "digitalTwinVersionId": self.version_id,
+            "depthLimit": depth,
+        }
+        if node is not None:
+            arguments["node"] = node
+        else:
+            assert edge is not None
+            arguments["edge"] = {"source": edge[0], "target": edge[1]}
+        return app(
+            "analyze_digital_twin_path",
+            arguments,
+            height=height,
+            theme=theme,
+            transport=self._transport,
+        )
+
+    def review(self, *, height: int = 560, theme: str = "") -> "Any":
+        """The graph-review console under the cell: structural findings with accept/reject controls.
+
+        Runs the platform's DAG review (cycles, isolated nodes, weak or
+        wrong-direction edges, over-connected hubs) and mounts the interactive
+        console over the findings; applying a fix round-trips live through the
+        MCP gateway. Needs: pip install "rootcause-sdk[jupyter]".
+
+        Args:
+            height: Height of the mounted app, in pixels.
+            theme: `light`, `dark`, or empty to follow the notebook.
+
+        Returns:
+            The mounted widget, displayed by the notebook cell.
+        """
+        from rootcause.jupyter import app
+
+        return app(
+            "review_digital_twin",
+            {
+                "workspaceId": self._workspace_id,
+                "digitalTwinVersionId": self.version_id,
+            },
+            height=height,
+            theme=theme,
+            transport=self._transport,
+        )
+
+    def studio(
+        self,
+        query: str,
+        *,
+        targets: list[str] | None = None,
+        horizon: int | None = None,
+        environments: list[str] | None = None,
+        aggregate: str | None = None,
+        height: int = 640,
+        theme: str = "",
+    ) -> "Any":
+        """Ask a what-if in plain English; the What-If Studio renders the answer under the cell.
+
+        The scenario is inferred from the question and executed server-side;
+        the studio draws the result with the dials behind it, so a tweaked
+        scenario re-runs live through the MCP gateway without leaving the
+        notebook. Needs: pip install "rootcause-sdk[jupyter]".
+
+        Args:
+            query: The question, stated completely — which variables change, to
+                what, and the outcome of interest.
+            targets: Exact outcome variable names, when inference should not
+                pick them from the question.
+            horizon: Forecast scenarios only: exact number of steps.
+            environments: Panel forecasts only: restrict to these environments.
+            aggregate: Panel forecasts only: `sum`, `avg`, `min`, or `max`
+                across environments.
+            height: Height of the mounted app, in pixels.
+            theme: `light`, `dark`, or empty to follow the notebook.
+
+        Returns:
+            The mounted widget, displayed by the notebook cell.
+        """
+        from rootcause.jupyter import app
+
+        arguments: dict[str, Any] = {
+            "workspaceId": self._workspace_id,
+            "digitalTwinVersionId": self.version_id,
+            "query": query,
+        }
+        if targets is not None:
+            arguments["targetVars"] = targets
+        if horizon is not None:
+            arguments["forecastH"] = horizon
+        if environments is not None:
+            arguments["environments"] = environments
+        if aggregate is not None:
+            arguments["aggregateMode"] = aggregate
+        return app(
+            "query_digital_twin",
+            arguments,
             height=height,
             theme=theme,
             transport=self._transport,
