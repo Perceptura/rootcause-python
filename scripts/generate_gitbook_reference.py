@@ -72,7 +72,8 @@ def wrap_signature(head: str, params: list[str], tail: str) -> str:
 def signature(obj: griffe.Function, qualifier: str = "") -> str:
     parts = []
     for param in obj.parameters:
-        if param.name == "self":
+        # self/cls are the binding, not part of the call.
+        if param.name in ("self", "cls"):
             continue
         if param.kind is griffe.ParameterKind.keyword_only and "*" not in parts:
             parts.append("*")
@@ -104,6 +105,12 @@ def render_docstring(obj: griffe.Object) -> list[str]:
                 lines.append(
                     f"| `{param.name}` | {annotation} | {default} | {one_line(param.description)} |"
                 )
+            lines.append("")
+        elif kind is griffe.DocstringSectionKind.attributes:
+            lines += ["| Attribute | Type | Description |", "| --- | --- | --- |"]
+            for attribute in section.value:
+                annotation = f"`{cell(attribute.annotation)}`" if attribute.annotation is not None else ""
+                lines.append(f"| `{attribute.name}` | {annotation} | {one_line(attribute.description)} |")
             lines.append("")
         elif kind is griffe.DocstringSectionKind.returns:
             # A wrapped Returns: description parses as one entry per line, and a

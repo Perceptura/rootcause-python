@@ -9,22 +9,45 @@ _OPERATOR_SYMBOLS = {"==", "!=", "<>", ">", "<", ">=", "<=", "in", "not_in", "eq
 
 
 def set(value: float | int | str | bool) -> dict[str, Any]:  # noqa: A001
-    """Set the variable to an exact value."""
+    """Set the variable to an exact value.
+
+    A bare value anywhere `do=` is accepted means the same thing.
+
+    Args:
+        value: The value to pin the variable to.
+    """
     return {"type": "set_value", "value": value}
 
 
 def pct(value: float) -> dict[str, Any]:
-    """Relative percentage change: rc.pct(+15) means +15%."""
+    """Relative percentage change: rc.pct(+15) means +15%.
+
+    Args:
+        value: The change, in percent.
+    """
     return {"type": "relative_change", "mode": "percentage", "value": value}
 
 
 def add(value: float) -> dict[str, Any]:
-    """Relative absolute change: rc.add(-5) means minus five units."""
+    """Relative absolute change: rc.add(-5) means minus five units.
+
+    Args:
+        value: The change, in the variable's own units.
+    """
     return {"type": "relative_change", "mode": "absolute", "value": value}
 
 
 def prob(category: str | int | bool | dict[Any, float], probability: float | None = None) -> dict[str, Any]:
-    """Set a category's probability: rc.prob("yes", 0.8) or rc.prob({"yes": 0.8})."""
+    """Set a category's probability: rc.prob("yes", 0.8) or rc.prob({"yes": 0.8}).
+
+    Args:
+        category: The category, or a single-pair `{category: probability}` dict.
+        probability: The probability, when `category` is not a dict.
+
+    Raises:
+        ValueError: The dict form carried more than one pair, or no probability
+            was given.
+    """
     if isinstance(category, dict):
         if len(category) != 1:
             raise ValueError("rc.prob({...}) takes exactly one category: probability pair")
@@ -35,7 +58,12 @@ def prob(category: str | int | bool | dict[Any, float], probability: float | Non
 
 
 def adjust_prob(category: str | int | bool, delta: float) -> dict[str, Any]:
-    """Shift a category's probability by percentage points: rc.adjust_prob("yes", +10)."""
+    """Shift a category's probability by percentage points: rc.adjust_prob("yes", +10).
+
+    Args:
+        category: The category to shift.
+        delta: The shift, in percentage points.
+    """
     return {"type": "adjust_probability", "category": category, "delta": float(delta)}
 
 
@@ -45,7 +73,14 @@ def members(
     size: int | None = None,
     replace: bool = False,
 ) -> dict[str, Any]:
-    """Set-valued column intervention: who is in the set, who is out, how big it is."""
+    """Set-valued column intervention: who is in the set, who is out, how big it is.
+
+    Args:
+        include: Members that must be in the set.
+        exclude: Members that must not be.
+        size: How large the set should be.
+        replace: Replace the observed membership instead of amending it.
+    """
     return {"type": "set_members", "include": include, "exclude": exclude, "size": size, "replace": replace}
 
 
@@ -58,8 +93,15 @@ def at(
     """Schedule an intervention in time, for temporal and panel twins.
 
     Wraps a value spec (or bare value) with when it applies and for how long:
-    rc.at(rc.pct(-10), persistent=True) applies from the first forecast step
-    onwards; duration_steps limits it; timestamp (ms epoch) anchors the start.
+    `rc.at(rc.pct(-10), persistent=True)` applies from the first forecast step
+    onwards.
+
+    Args:
+        spec: The intervention to schedule, or a bare value.
+        timestamp: When it starts (ms epoch). Defaults to the first forecast
+            step.
+        persistent: Keep applying it for every later step.
+        duration_steps: Apply it for this many steps only.
     """
     value_spec = spec if isinstance(spec, dict) and "type" in spec else {"type": "set_value", "value": spec}
     scheduled: dict[str, Any] = {"valueSpec": value_spec}
@@ -75,8 +117,13 @@ def at(
 def range(from_: float | None = None, to: float | None = None, *, steps: int | None = None) -> dict[str, Any]:  # noqa: A001
     """Sweep a numeric variable across a grid instead of pinning it: rc.range(15, 30).
 
-    Omit from_/to to sweep the variable's observed p05..p95. A scenario carries
-    at most one range intervention; read the curves back with result.sweep().
+    A scenario carries at most one range intervention; read the curves back with
+    `result.sweep()`.
+
+    Args:
+        from_: Low end of the sweep. Defaults to the variable's observed p05.
+        to: High end of the sweep. Defaults to the observed p95.
+        steps: How many points to evaluate across the range.
     """
     spec: dict[str, Any] = {"type": "range"}
     if from_ is not None:
@@ -91,13 +138,28 @@ def range(from_: float | None = None, to: float | None = None, *, steps: int | N
 def metric(name: str, sql: str, unit: str = "count", higher_is_better: bool = True) -> dict[str, Any]:
     """A simulation metric: SQL over the sampled frame, registered as df/data/dataset.
 
-    Example: rc.metric("avg_revenue", "SELECT AVG(revenue) AS value FROM df", unit="USD")
+    Args:
+        name: Name for the metric, as it appears on the result.
+        sql: SQL over the sampled frame, which is registered as `df`, `data`,
+            and `dataset`.
+        unit: Unit label for the metric's value.
+        higher_is_better: Which direction counts as an improvement.
+
+    Examples:
+        >>> rc.metric("avg_revenue", "SELECT AVG(revenue) AS value FROM df", unit="USD")
     """
     return {"name": name, "sqlQuery": sql, "unit": unit, "higherIsBetter": higher_is_better}
 
 
 def mean_metrics(outcomes: list[str]) -> list[dict[str, Any]]:
-    """Mean-of-column metrics for each outcome variable, the common case."""
+    """Mean-of-column metrics for each outcome variable, the common case.
+
+    Args:
+        outcomes: Column names to average.
+
+    Returns:
+        One mean-of-column metric per outcome, ready for `metrics=`.
+    """
     return [
         metric(f"avg_{column}", f'SELECT AVG("{column}") AS value FROM df')
         for column in outcomes
