@@ -126,4 +126,14 @@ docs:publish:
     - 'git commit -m "docs(python-sdk): reference for ${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}"'
     - git push origin "HEAD:$DOCS_REPO_BRANCH"
   rules:
+    # A release tag publishes on its own; anything untagged waits for someone to
+    # press the button. allow_failure keeps the un-pressed job from blocking the
+    # pipeline.
     - if: $CI_COMMIT_TAG =~ /^[0-9]+\.[0-9]+\.[0-9]+([ab]|rc)?[0-9]*$/
+      when: on_success
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+      allow_failure: true
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: manual
+      allow_failure: true
