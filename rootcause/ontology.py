@@ -128,13 +128,28 @@ class Ontology:
 
     def _resolve(self, needle: str) -> dict[str, Any]:
         concepts = self._concepts_raw()
+        # An id match is exact by construction; names are NOT unique — two
+        # unmerged sources with the same column each mint a concept with the
+        # same name, so a name match must refuse ambiguity rather than pick one.
         for concept in concepts:
-            if needle in (concept.get("id"), concept.get("_id"), concept.get("name")):
+            if needle in (concept.get("id"), concept.get("_id")):
                 return concept
-        lowered = needle.lower()
-        for concept in concepts:
-            if str(concept.get("name", "")).lower() == lowered:
-                return concept
+        matches = [c for c in concepts if c.get("name") == needle]
+        if not matches:
+            lowered = needle.lower()
+            matches = [c for c in concepts if str(c.get("name", "")).lower() == lowered]
+        if len(matches) > 1:
+            described = "; ".join(
+                f'{c.get("id") or c.get("_id")} (field "{c.get("schemaFieldName")}", '
+                f'{len(c.get("fieldMappings") or [])} source(s))'
+                for c in matches
+            )
+            raise RootCauseError(
+                f'"{needle}" names {len(matches)} concepts in this workspace — '
+                f"pass the concept id instead: {described}"
+            )
+        if matches:
+            return matches[0]
         names = [str(concept.get("name")) for concept in concepts if concept.get("name")]
         raise NotFoundInWorkspaceError("ontology concept", needle, difflib.get_close_matches(needle, names, n=5))
 

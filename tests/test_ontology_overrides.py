@@ -169,3 +169,35 @@ def test_locks_frame_shows_value_vs_detected(api, transport):
     assert list(frame["field"]) == ["minValue"]
     assert list(frame["value"]) == [0]
     assert list(frame["detected"]) == [-50.0]
+
+
+def test_ambiguous_concept_name_refuses_and_lists_candidates(api, transport):
+    twins = [
+        {**CONCEPT, "id": "c-rev-a", "schemaFieldName": "revenue", "fieldMappings": [{}]},
+        {**CONCEPT, "id": "c-rev-b", "schemaFieldName": "total_revenue", "fieldMappings": [{}, {}]},
+    ]
+    api.on("GET", f"{BASE}/concepts", {"data": twins})
+    onto = Ontology(transport, WS)
+
+    with pytest.raises(RootCauseError) as exc:
+        onto.override("cumulative_revenue", unit="GBP")
+
+    message = str(exc.value)
+    assert "2 concepts" in message
+    assert "c-rev-a" in message and "c-rev-b" in message
+    assert "total_revenue" in message
+
+
+def test_ambiguous_name_still_resolves_by_exact_id(api, transport):
+    twins = [
+        {**CONCEPT, "id": "c-rev-a"},
+        {**CONCEPT, "id": "c-rev-b"},
+    ]
+    api.on("GET", f"{BASE}/concepts", {"data": twins})
+    api.on("GET", f"{BASE}/concepts/c-rev-b", {"data": twins[1]})
+    api.on("PUT", f"{BASE}/concepts/c-rev-b", {"data": twins[1]})
+
+    Ontology(transport, WS).override("c-rev-b", unit="GBP")
+
+    body = api.body_of("PUT", "/concepts/c-rev-b")
+    assert body["_id"] == "c-rev-b"
