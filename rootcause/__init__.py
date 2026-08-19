@@ -53,6 +53,13 @@ def login(api_key: str | None = None, base_url: str | None = None) -> None:
     3. a cached OAuth token in `~/.rootcause`,
     4. an interactive browser login (PKCE; on a remote kernel it prints a URL
        to paste a code back from).
+
+    Args:
+        api_key: An API key (`pk_...`). When omitted, resolution falls through
+            `ROOTCAUSE_API_KEY`, the cached OAuth token in `~/.rootcause/`, then
+            an interactive browser login with PKCE.
+        base_url: Deployment URL, for example `https://sandbox.rootcause.ai`.
+            Falls back to `ROOTCAUSE_BASE_URL`, then the production default.
     """
     if _session["transport"] is not None:
         _session["transport"].close()
@@ -68,13 +75,24 @@ def _transport() -> Transport:
 
 
 def whoami() -> dict[str, "Any"]:
-    """What the current credential is: ids, scopes, auth type, rate limit."""
+    """What the current credential is: ids, scopes, auth type, rate limit.
+
+    Returns:
+        `userId`, `organisationId`, `workspaceId` (the pin, or None for
+        org-wide), `scopes`, `authType`, and `rateLimit`. Needs no scopes, so it
+        is the cheap way to fail fast before starting a workflow.
+    """
     envelope = _transport().request("GET", "/api/v1/me")
     return envelope.get("data", envelope)
 
 
 def workspaces() -> "pd.DataFrame":
-    """All workspaces the session can see."""
+    """All workspaces the session can see.
+
+    Returns:
+        A DataFrame of `id` and `name`. The SDK's internal scratch workspace is
+        excluded.
+    """
     import pandas as pd
 
     envelope = _transport().request("GET", "/api/v1/workspaces")
@@ -87,7 +105,19 @@ def workspaces() -> "pd.DataFrame":
 
 
 def workspace(needle: str, *, create: bool = False) -> Workspace:
-    """Resolve a workspace by name or id; create=True creates it when missing."""
+    """Resolve a workspace by name or id; create=True creates it when missing.
+
+    Args:
+        needle: Workspace name or id. Case-insensitive.
+        create: Create the workspace when it does not exist.
+
+    Returns:
+        The matching [`Workspace`](#workspace).
+
+    Raises:
+        NotFoundInWorkspaceError: The name did not resolve, and `create` is
+            False. Carries the closest names as suggestions.
+    """
     transport = _transport()
     envelope = transport.request("GET", "/api/v1/workspaces")
     docs = list(envelope.get("data", []))
@@ -119,8 +149,30 @@ def discover(
 ) -> Graph:
     """Causal discovery on a DataFrame. Compute runs on the platform; nothing user-visible persists.
 
-    Identical data reuses the previously discovered twin; force=True re-runs
-    discovery from scratch (the recovery path for corrupt or outdated models).
+    Uploads the frame (deduplicated by content hash), creates a twin directly
+    over the uploaded source, runs discovery, and returns its graph. Identical
+    data reuses the previously discovered twin instantly.
+
+    Args:
+        frame: The data to discover over.
+        target: Outcome column of interest; recorded for downstream defaults.
+        time: Time column. Setting it makes the twin temporal.
+        entity: Entity or environment column. Setting it makes the twin
+            multi-environment.
+        kind: One of `static`, `temporal`, `multi-environment-static`,
+            `multi-environment-temporal`. Inferred from `time` and `entity` when
+            omitted, and must agree with them when given.
+        name: Twin name on the platform. Derived from the data when omitted.
+        force: Ignore the reuse cache and re-run discovery from scratch. The
+            recovery path when a model is corrupt or predates an engine fix.
+        timeout: Seconds to wait for the discovery job.
+
+    Returns:
+        The discovered [`Graph`](#graph).
+
+    Raises:
+        KindMismatchError: An explicit `kind` contradicts `time` and `entity`.
+        JobFailedError: Discovery ended in a terminal non-success state.
     """
     return _direct.discover(
         frame, target=target, time=time, entity=entity, kind=kind, name=name,
@@ -129,12 +181,32 @@ def discover(
 
 
 def load_twin(path: "str | Path", timeout: float = 3600.0) -> Twin:
-    """Load a .rctwin export zip back into a runnable twin."""
+    """Load a .rctwin export zip back into a runnable twin.
+
+    Args:
+        path: Path to a `.rctwin` file written by `Twin.save()`.
+        timeout: Seconds to wait for the import job.
+
+    Returns:
+        The imported [`Twin`](#twin), trained parameters included.
+    """
     return _direct.load_twin(path, transport=_transport(), timeout=timeout)
 
 
 def render_widget(widget: dict[str, Any], theme: str = "light") -> str:
-    """Render a widget payload to a self-contained HTML fragment via the platform renderer."""
+    """Render a widget payload to a self-contained HTML fragment via the platform renderer.
+
+    Args:
+        widget: A widget payload as emitted by the agent and MCP tools.
+        theme: `light` or `dark`.
+
+    Returns:
+        The HTML string.
+
+    Raises:
+        RootCauseApiError: The payload has no session-less rendering. The error
+            lists the renderable kinds.
+    """
     envelope = _transport().request(
         "POST", "/api/v1/render/widget", json_body={"widget": widget, "theme": theme}
     )
