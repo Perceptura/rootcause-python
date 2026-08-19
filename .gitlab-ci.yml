@@ -77,6 +77,9 @@ docs:
   script:
     - pip install --upgrade pip
     - pip install ".[docs]"
+    # docs/ is generated, not committed: the pages are boilerplate around the
+    # mkdocstrings directives and would only rot next to mkdocs.yml's nav.
+    - python scripts/generate_mkdocs_pages.py
     # The mkdocs site is not what gets published (GitBook renders markdown), but
     # --strict is a cheap gate: a broken cross-reference or a page missing from
     # the nav fails here rather than shipping a hole in the reference.

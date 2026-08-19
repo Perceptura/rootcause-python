@@ -11,4 +11,7 @@ examples/*-executed.ipynb
 .ipynb_checkpoints/
 *.rctwin
 site/
-docs
+# Generated in CI, never committed: the mkdocs page tree, and the markdown
+# reference that gets pushed to the GitBook docs repo.
+docs/
+generated-docs/

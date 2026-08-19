@@ -32,12 +32,18 @@ run = "ruff check rootcause tests"
 description = "Format with ruff"
 run = "ruff format rootcause tests"
 
+[tasks."docs:pages"]
+description = "Generate the (gitignored) docs/ page tree mkdocs builds from"
+run = "uv run --extra docs python scripts/generate_mkdocs_pages.py"
+
 [tasks.docs]
 description = "Serve the docs at localhost:8000 with live reload"
+depends = ["docs:pages"]
 run = "uv run --extra docs mkdocs serve"
 
 [tasks."docs:build"]
 description = "Build the docs into site/ and fail on any warning"
+depends = ["docs:pages"]
 run = "uv run --extra docs mkdocs build --strict"
 
 [tasks."docs:reference"]
