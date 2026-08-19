@@ -55,7 +55,14 @@ class Graph:
         return pd.DataFrame(rows, columns=["cause", "effect", "strength", "fixed"])
 
     def adjacency(self, values: str = "strength") -> "pd.DataFrame":
-        """Adjacency matrix as a labelled DataFrame; values: strength | sign | bool."""
+        """Adjacency matrix as a labelled DataFrame.
+
+        Args:
+            values: What each cell holds: `strength`, `sign`, or `bool`.
+
+        Returns:
+            A square DataFrame indexed by cause and labelled by effect.
+        """
         import pandas as pd
 
         nodes = self.nodes
@@ -91,7 +98,15 @@ class Graph:
         return graph
 
     def pin(self, cause: str, effect: str) -> "Graph":
-        """Fix an edge as present: domain knowledge the next discovery run must honour."""
+        """Fix an edge as present: domain knowledge the next discovery run must honour.
+
+        Args:
+            cause: The causing variable.
+            effect: The affected variable.
+
+        Returns:
+            This graph, refreshed.
+        """
         self._twin._transport.request(
             "PATCH",
             f"{self._twin._version_path()}/graph/fixed",
@@ -100,7 +115,15 @@ class Graph:
         return self.refresh()
 
     def forbid(self, cause: str, effect: str) -> "Graph":
-        """Fix an edge as absent (anti-edge)."""
+        """Fix an edge as absent (anti-edge).
+
+        Args:
+            cause: The causing variable.
+            effect: The affected variable.
+
+        Returns:
+            This graph, refreshed.
+        """
         self._twin._transport.request(
             "PATCH",
             f"{self._twin._version_path()}/graph/fixed",

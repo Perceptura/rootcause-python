@@ -104,7 +104,11 @@ class Source:
         return pd.read_parquet(io.BytesIO(blob))
 
     def extend(self, frame: "pd.DataFrame") -> None:
-        """Append new rows to this source. Blocks until the rows are ingested."""
+        """Append new rows to this source. Blocks until the rows are ingested.
+
+        Args:
+            frame: Rows to append. The schema must match the source.
+        """
         buffer = io.BytesIO()
         frame.to_parquet(buffer, index=False)
         self._transport.request(
@@ -154,6 +158,15 @@ class DataView:
         return pd.read_parquet(io.BytesIO(blob))
 
     def records(self, limit: int = 100, cursor: str | None = None) -> list[dict[str, Any]]:
+        """One page of rows as dicts.
+
+        Args:
+            limit: Rows per page.
+            cursor: The previous page's cursor, to continue from it.
+
+        Returns:
+            The page's rows.
+        """
         params: dict[str, Any] = {"limit": limit}
         if cursor:
             params["cursor"] = cursor
@@ -186,6 +199,15 @@ class Connector:
         return envelope.get("data", envelope)
 
     def browse(self, level: str, **context: str) -> Any:
+        """Walk the external system's hierarchy one level at a time.
+
+        Args:
+            level: Which level to list, for example `databases` or `tables`.
+            **context: The levels already chosen, narrowing the listing.
+
+        Returns:
+            The listing for that level.
+        """
         envelope = self._transport.request(
             "GET", f"/api/v1/connectors/{self.id}/browse", params={"level": level, **context}
         )
@@ -195,8 +217,20 @@ class Connector:
         """Run a custom query against the external system and return sample rows.
 
         The authoring loop for custom SQL: nothing is stored, database errors
-        come back verbatim. Extra kwargs (database=, warehouse=, schema=, …)
-        join the connector config.
+        come back verbatim.
+
+        Args:
+            query: The SQL to run.
+            limit: Row cap on the sample that comes back.
+            **config: Connector config overrides, for example `database=`,
+                `warehouse=`, `schema=`.
+
+        Returns:
+            The sample rows as a DataFrame.
+
+        Raises:
+            RootCauseError: The external system rejected the query. Its error is
+                quoted verbatim.
         """
         import pandas as pd
 
@@ -212,14 +246,47 @@ class Connector:
         return pd.DataFrame(data.get("rows", []), columns=columns)
 
     def import_table(self, table: str, *, name: str | None = None, timeout: float = 3600.0, **config: Any) -> Source:
-        """Import one table into the workspace as a new source."""
+        """Import one table into the workspace as a new source.
+
+        Args:
+            table: Table to import.
+            name: Name for the new source. Derived from the table when omitted.
+            timeout: Seconds to wait for the import job.
+            **config: Connector config overrides, for example `database=`,
+                `schema=`.
+
+        Returns:
+            The new [`Source`](#source).
+        """
         return self.run_import({"table": table, **config}, dataset_name=name, timeout=timeout)
 
     def import_query(self, query: str, *, name: str | None = None, timeout: float = 3600.0, **config: Any) -> Source:
-        """Import the result of a custom query into the workspace as a new source."""
+        """Import the result of a custom query into the workspace as a new source.
+
+        Args:
+            query: The SQL whose result becomes the source.
+            name: Name for the new source.
+            timeout: Seconds to wait for the import job.
+            **config: Connector config overrides.
+
+        Returns:
+            The new [`Source`](#source).
+        """
         return self.run_import({"query": query, **config}, dataset_name=name, timeout=timeout)
 
     def run_import(self, config: dict[str, Any], *, dataset_name: str | None = None, timeout: float = 3600.0) -> Source:
+        """Import with a raw, connector-specific payload.
+
+        The escape hatch under `import_table` and `import_query`.
+
+        Args:
+            config: The connector's own import payload.
+            dataset_name: Name for the new source.
+            timeout: Seconds to wait for the import job.
+
+        Returns:
+            The new [`Source`](#source).
+        """
         body: dict[str, Any] = {"workspaceId": self._workspace_id, "config": config}
         if dataset_name:
             body["datasetName"] = dataset_name
@@ -294,7 +361,17 @@ class Workspace:
         return collection
 
     def add_connector(self, name: str, type: str, **credentials: Any) -> Connector:
-        """Register a connector to an external system (credentials are stored encrypted)."""
+        """Register a connector to an external system (credentials are stored encrypted).
+
+        Args:
+            name: Name for the connector.
+            type: Connector type, for example `postgresql` or `snowflake`.
+            **credentials: The connector's credentials. Stored encrypted, and
+                never returned by the API.
+
+        Returns:
+            The registered [`Connector`](#connector).
+        """
         envelope = self._transport.request(
             "POST",
             "/api/v1/connectors",
@@ -313,7 +390,17 @@ class Workspace:
         return self.twins[needle]
 
     def upload(self, frame: "pd.DataFrame", name: str, *, wait: bool = True, timeout: float = 600.0) -> Source:
-        """Upload a DataFrame as a new source (parquet on the wire, full ingest server-side)."""
+        """Upload a DataFrame as a new source (parquet on the wire, full ingest server-side).
+
+        Args:
+            frame: The data to upload.
+            name: Name for the new source.
+            wait: Block until the schema materialises server side.
+            timeout: Seconds to wait for ingest, when `wait` is True.
+
+        Returns:
+            The new [`Source`](#source).
+        """
         buffer = io.BytesIO()
         frame.to_parquet(buffer, index=False)
 
@@ -352,6 +439,25 @@ class Workspace:
         environment_columns: list[str] | None = None,
         tags: list[str] | None = None,
     ) -> Twin:
+        """Create a twin over a dataset, or directly over a raw source.
+
+        Args:
+            name: Name for the twin.
+            kind: One of `static`, `temporal`, `multi-environment-static`,
+                `multi-environment-temporal`.
+            dataset_id: Dataset to train on. Pass this or `source_id`.
+            source_id: Raw source to train on, skipping the dataset step.
+            time_column: Time column, for temporal kinds.
+            environment_columns: Columns that identify an environment, for panel
+                kinds.
+            tags: Tags to file the twin under.
+
+        Returns:
+            The new [`Twin`](#twin), untrained.
+
+        Raises:
+            RootCauseError: Both `dataset_id` and `source_id` were given.
+        """
         if dataset_id and source_id:
             raise RootCauseError("Pass either dataset_id or source_id, not both")
         body: dict[str, Any] = {"name": name, "type": kind}
