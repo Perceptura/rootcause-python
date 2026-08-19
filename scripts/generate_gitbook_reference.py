@@ -231,6 +231,10 @@ def build() -> str:
         search_paths=[str(REPO_ROOT)],
     )
     lines = [BANNER, "", f"# {TITLE}", ""]
+    # The package docstring carries the conventions that hold across the surface.
+    for section in package.docstring.parsed if package.docstring else []:
+        if section.kind is griffe.DocstringSectionKind.text:
+            lines += [section.value.strip(), ""]
     for heading, module_path, blurb in SECTIONS:
         module = package if module_path == "rootcause" else package[module_path.split(".", 1)[1]]
         lines += render_module(module, heading, blurb, top_level=module_path == "rootcause")

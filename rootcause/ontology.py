@@ -21,7 +21,21 @@ _ONTOLOGY_OPERATORS = {
 
 
 class OntologyQueryResult:
-    """Rows out of the ontology query engine, plus the compiled dataset and any warnings."""
+    """Rows out of the ontology query engine, plus the compiled dataset and any warnings.
+
+    Attributes:
+        rows (list[dict]): The first page of rows.
+        row_count (int | None): Total rows the query matched.
+        schema (list): Column schema for the rows.
+        warnings (list[str]): Anything the engine wants you to know about the
+            join.
+        dataset (dict | None): The compiled dataset definition, persistable via
+            the API.
+        query (dict | None): For `ask()`, the structured query the translator
+            produced.
+        next_cursor (str | None): Cursor for the next page, when there is one.
+        summary (str | None): The engine's narrative summary, when it made one.
+    """
 
     def __init__(self, ontology: "Ontology", payload: dict[str, Any], request_body: dict[str, Any]) -> None:
         self._ontology = ontology

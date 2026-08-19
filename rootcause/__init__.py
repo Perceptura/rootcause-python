@@ -12,6 +12,10 @@ Two modes, one object model:
     graph = rc.discover(df, target="re78")            # direct mode — no workspace ceremony
     twin = graph.train()
     twin.intervene({"treat": rc.set(1)}, where={"re75": ("<", 5000)})
+
+Conventions throughout: every long-running call blocks with a progress line and
+raises `JobFailedError` on failure; everything tabular answers `to_frame()`;
+names resolve case-insensitively, with close-match suggestions on a miss.
 """
 
 from typing import TYPE_CHECKING, Any

@@ -16,7 +16,12 @@ def _pandas():
 
 
 class SampleDraws:
-    """Raw joint posterior draws from twin.sample(), columnar on the wire."""
+    """Raw joint posterior draws from twin.sample(), columnar on the wire.
+
+    Attributes:
+        n (int): Draws per sampling unit.
+        raw (dict): The payload as it came off the wire.
+    """
 
     def __init__(self, payload: dict[str, Any]) -> None:
         self.raw = payload
@@ -56,7 +61,13 @@ def _walk_records(node: Any, path: tuple[str, ...] = ()) -> list[tuple[tuple[str
 
 
 class SimulationResult:
-    """A completed simulation run: raw outputs plus best-effort tabular and narrative views."""
+    """A completed simulation run: raw outputs plus best-effort tabular and narrative views.
+
+    Attributes:
+        run_id (str): The run this result came from.
+        run (dict): The run document: status, timings, and the rest.
+        scenario (dict | None): The scenario that ran.
+    """
 
     def __init__(
         self,
@@ -192,7 +203,11 @@ class SimulationResult:
 
 
 class ForecastResult(SimulationResult):
-    """Forecast run with a tidy long-format frame: environment, series, timestamp, values."""
+    """Forecast run with a tidy long-format frame: environment, series, timestamp, values.
+
+    Everything on [`SimulationResult`](#simulationresult) applies; `to_frame()`
+    additionally carries an `environment` column.
+    """
 
     @staticmethod
     def _env_results(results: Any) -> tuple[dict[str, Any] | None, Any]:
@@ -224,7 +239,14 @@ class ForecastResult(SimulationResult):
 
 
 class UpdateResult:
-    """Outcome of an incremental model update (assimilation)."""
+    """Outcome of an incremental model update (assimilation).
+
+    Attributes:
+        status (str): `committed`, `up_to_date`, or `retrain_required`.
+        rows_assimilated (int | None): Rows folded into the model, when any.
+        reasons (list[str]): Why assimilation was not possible, when it was not.
+        job (dict): The underlying job document.
+    """
 
     def __init__(self, job: dict[str, Any]) -> None:
         self.job = job
@@ -245,7 +267,11 @@ class UpdateResult:
 
 
 class ScoreResult:
-    """Verdicts and per-row counterfactual changes from a batch scoring run."""
+    """Verdicts and per-row counterfactual changes from a batch scoring run.
+
+    Attributes:
+        run_id (str): The simulation run underneath.
+    """
 
     def __init__(self, transport: Any, workspace_id: str, run_id: str) -> None:
         self._transport = transport
