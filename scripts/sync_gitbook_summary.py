@@ -15,7 +15,10 @@ ANCHOR = "* [Python API Reference](api/sdk-api-reference.md)"
 
 def sync(summary: Path, target: str, title: str) -> bool:
     """Insert the entry if missing. Returns True when the file changed."""
-    raw = summary.read_text(newline="")
+    # open(newline="") rather than read_text(newline=""): the latter is 3.13+,
+    # and this runs on the 3.12 CI image.
+    with summary.open(newline="") as handle:
+        raw = handle.read()
     # GitBook writes SUMMARY.md with CRLF; rewriting it with LF would turn a
     # one-line insert into a whole-file diff.
     newline = "\r\n" if "\r\n" in raw else "\n"
@@ -28,7 +31,8 @@ def sync(summary: Path, target: str, title: str) -> bool:
         if line.strip() == ANCHOR:
             indent = line[: len(line) - len(line.lstrip())]
             lines.insert(index + 1, f"{indent}* [{title}]({target})")
-            summary.write_text(newline.join(lines) + newline, newline="")
+            with summary.open("w", newline="") as handle:
+                handle.write(newline.join(lines) + newline)
             return True
 
     raise SystemExit(
