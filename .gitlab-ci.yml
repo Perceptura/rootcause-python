@@ -121,7 +121,9 @@ docs:publish:
         echo "Docs unchanged; nothing to push."
         exit 0
       fi
-    - git commit -m "docs(python-sdk): reference for ${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}"
+    # Single-quoted: the colon-space in the commit subject would otherwise make
+    # YAML read this line as a mapping instead of a string.
+    - 'git commit -m "docs(python-sdk): reference for ${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}"'
     - git push origin "HEAD:$DOCS_REPO_BRANCH"
   rules:
     - if: $CI_COMMIT_TAG =~ /^[0-9]+\.[0-9]+\.[0-9]+([ab]|rc)?[0-9]*$/
