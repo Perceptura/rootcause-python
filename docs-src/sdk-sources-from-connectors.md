@@ -1,4 +1,4 @@
-# Python SDK: Sources from Connectors
+# Sources from Connectors
 
 From a warehouse table to a causal model without leaving Python: register a connector, author custom SQL against the live database, import the result as a source, and model it. Outputs shown are real transcripts against a PostgreSQL database; Snowflake, MySQL, ClickHouse, MongoDB, S3, and the other connector types follow the same verbs — swap the `type` and credentials.
 
@@ -88,7 +88,7 @@ Twin('Store weeks', kind=static, version=Z08TxdUFFQPTWlvNSQH2r, state=trained)
 
 The loop from here is the same as any other source: re-import or sync on a schedule, `twin.update()` to fold new rows in ([Working with Digital Twins](sdk-working-with-twins.md#keeping-a-trained-model-current)), and [Temporal and Panel Twins](sdk-temporal-and-panel-twins.md) for time series and per-environment modelling.
 
-Over REST, the same loop is `POST /connectors` → `POST /connectors/{id}/preview-query` → `POST /connectors/{id}/import` — see the [REST API Reference](rest-api-reference.md).
+Over REST, the same loop is `POST /connectors` → `POST /connectors/{id}/preview-query` → `POST /connectors/{id}/import` — see the [REST API Reference](../api-and-integrations/rest-api-reference/).
 
 ## Run it yourself
 

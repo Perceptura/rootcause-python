@@ -36,10 +36,13 @@ AUTHORED_PAGES = [
 # Link targets that resolve inside the GitBook docs but not inside this site.
 # Rewritten on the way into docs/ only: docs-src/ keeps them relative, which is
 # what the published pages need.
+# GitBook joins the SUMMARY.md group and page slugs into the live URL, which is
+# why the published pages link out as ../api-and-integrations/... rather than to
+# a .md file.
 LINK_REWRITES = {
     INDEX_SOURCE: "index.md",
-    "api-access.md": "https://docs.rootcause.ai/api-access",
-    "rest-api-reference.md": "https://docs.rootcause.ai/rest-api-reference",
+    "../api-and-integrations/rest-api-reference/": "https://docs.rootcause.ai/api-and-integrations/rest-api-reference",
+    "api-access.md": "https://docs.rootcause.ai/api-and-integrations/api-access",
 }
 
 # (relative path, page title, module to document, blurb). Must stay in step with
@@ -68,8 +71,8 @@ REFERENCE_PAGES: list[tuple[str, str, str, str]] = [
 def rewrite_links(text: str) -> str:
     """Repoint the markdown links that only resolve at the published paths."""
     for target, replacement in LINK_REWRITES.items():
-        for suffix in (")", "#"):
-            text = text.replace(f"]({target}{suffix}", f"]({replacement}{suffix}")
+        text = text.replace(f"]({target})", f"]({replacement})")
+        text = text.replace(f"]({target}#", f"]({replacement}#")
     return text
 
 

@@ -1,4 +1,4 @@
-# Python SDK: Ontology Queries
+# Ontology Queries
 
 The ontology is the workspace's semantic layer: concepts are the shared meaning of columns across sources, and the query engine joins, filters, and aggregates through them so you never hand-write reconciliation SQL. This guide queries it from Python; outputs shown are real transcripts.
 
@@ -88,6 +88,6 @@ Pass `{"prompt": "..."}` instead of `query` for natural language. The response c
 
 ## Next steps
 
-- [Working with Digital Twins](sdk-working-with-twins.md)
-- [Python API Reference](sdk-api-reference.md)
-- [REST API Reference](rest-api-reference.md)
+* [Working with Digital Twins](sdk-working-with-twins.md)
+* [Python API Reference](sdk-api-reference.md)
+* [REST API Reference](../api-and-integrations/rest-api-reference/)

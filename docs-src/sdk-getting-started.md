@@ -1,11 +1,11 @@
-# Python SDK: Getting Started
+# Python SDK
 
 This guide installs the SDK, authenticates a session, and takes a pandas DataFrame to a discovered causal graph. Every code block below is a real transcript: the output shown is what the call returns.
 
 The SDK has two modes over one object model:
 
-- **Direct mode**: `rc.discover(df)` on a DataFrame. No workspace ceremony, nothing to set up in the UI first.
-- **Platform mode**: `rc.workspace(...)` over everything your team builds in the RootCause UI. Twins a colleague trained are simply there.
+* **Direct mode**: `rc.discover(df)` on a DataFrame. No workspace ceremony, nothing to set up in the UI first.
+* **Platform mode**: `rc.workspace(...)` over everything your team builds in the RootCause UI. Twins a colleague trained are simply there.
 
 ## Installation
 
@@ -99,9 +99,9 @@ Everything tabular answers `to_frame()`. Everything long-running blocks with a p
 
 ## Next steps
 
-- [Working with Digital Twins](sdk-working-with-twins.md): training, raw sampling, interventions, portable twins
-- [Temporal and Panel Twins](sdk-temporal-and-panel-twins.md): time series, environments, forecasts with attribution
-- [Ontology Queries](sdk-ontology-queries.md): the semantic layer from Python
-- [Interactive Apps in Notebooks](sdk-notebook-apps.md): the consoles Claude renders, under your cells
-- [Python API Reference](sdk-api-reference.md): every public function and class
-- [REST API Reference](rest-api-reference.md): the HTTP surface the SDK is built on
+* [Working with Digital Twins](sdk-working-with-twins.md): training, raw sampling, interventions, portable twins
+* [Temporal and Panel Twins](sdk-temporal-and-panel-twins.md): time series, environments, forecasts with attribution
+* [Ontology Queries](sdk-ontology-queries.md): the semantic layer from Python
+* [Interactive Apps in Notebooks](sdk-notebook-apps.md): the consoles Claude renders, under your cells
+* [Python API Reference](sdk-api-reference.md): every public function and class
+* [REST API Reference](../api-and-integrations/rest-api-reference/): the HTTP surface the SDK is built on
