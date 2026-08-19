@@ -336,7 +336,7 @@ def poll_job(
         if status in JOB_TERMINAL:
             progress.done()
             if status != "completed":
-                raise JobFailedError(job_id, status, str(doc.get("error") or doc.get("message") or "") or None)
+                raise JobFailedError(job_id, status, doc.get("error") or doc.get("message") or None)
             return doc
         if time.monotonic() > deadline:
             progress.done()
@@ -363,7 +363,7 @@ def poll_run(
         if status in RUN_TERMINAL:
             progress.done()
             if status != "completed":
-                raise JobFailedError(run_id, status, str(doc.get("error") or "") or None)
+                raise JobFailedError(run_id, status, doc.get("error") or None)
             return doc
         if time.monotonic() > deadline:
             progress.done()

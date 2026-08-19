@@ -11,13 +11,60 @@ class AuthenticationError(RootCauseError):
     """No usable credentials, or the platform rejected the ones provided."""
 
 
+_STATUS_HINTS = {
+    401: "Check the API key (ROOTCAUSE_API_KEY) or run rc.login() again.",
+    403: "The credential lacks a scope for this operation — rc.whoami() shows what it carries.",
+    409: "The resource changed underneath this call — re-read it and retry.",
+    429: "Rate limited. The SDK retries these automatically; sustained 429s mean the key's per-minute limit is too low for this workload.",
+}
+
+_MAX_DETAIL = 600
+
+
+def _looks_like_html(text: str) -> bool:
+    head = text.lstrip()[:200].lower()
+    return head.startswith("<!doctype") or head.startswith("<html")
+
+
+def _condense_detail(detail: str, status: int) -> str:
+    """Make server explanations readable: no HTML pages, no embedded stack traces."""
+    if _looks_like_html(detail):
+        if status == 404:
+            return (
+                "The server answered with a web page, not an API response — this endpoint "
+                "does not exist on that deployment. The platform is likely older than this "
+                "SDK; check the base_url or update the platform."
+            )
+        return f"The server answered with a web page, not an API response (HTTP {status})."
+    # A proxied upstream problem sometimes arrives embedded as JSON text, stack
+    # trace and all; keep its human fields and the traceId, drop the trace.
+    brace = detail.find("{")
+    if brace != -1 and '"stack"' in detail:
+        import json as _json
+
+        try:
+            upstream = _json.loads(detail[brace:])
+        except ValueError:
+            upstream = None
+        if isinstance(upstream, dict):
+            parts = [str(upstream.get("detail") or upstream.get("title") or "upstream error")]
+            if upstream.get("resource"):
+                parts.append(f'resource: {upstream["resource"]}')
+            if upstream.get("traceId"):
+                parts.append(f'traceId: {upstream["traceId"]}')
+            return f"{detail[:brace].strip()} {' — '.join(parts)}".strip()
+    if len(detail) > _MAX_DETAIL:
+        return detail[:_MAX_DETAIL] + " … [truncated]"
+    return detail
+
+
 class RootCauseApiError(RootCauseError):
     """The API answered with a problem response.
 
     Attributes:
         status (int): HTTP status code.
         title (str): Short problem title from the API.
-        detail (str): The API's explanation.
+        detail (str): The API's explanation, condensed to stay readable.
         body (Any): The raw problem body, when it was JSON.
     """
 
@@ -26,15 +73,33 @@ class RootCauseApiError(RootCauseError):
         self.title = title
         self.detail = detail
         self.body = body
-        super().__init__(f"[{status} {title}] {detail}")
+        hint = _STATUS_HINTS.get(status)
+        message = f"[{status} {title}] {detail}"
+        if hint:
+            message = f"{message}\n{hint}"
+        super().__init__(message)
 
     @classmethod
     def from_response(cls, body: Any, status: int) -> "RootCauseApiError":
         if isinstance(body, dict):
             title = str(body.get("title") or body.get("error") or "Error")
             detail = str(body.get("detail") or body.get("error") or body)
-            return cls(status, title, detail, body)
-        return cls(status, "Error", str(body), body)
+            return cls(status, title, _condense_detail(detail, status), body)
+        return cls(status, "Error", _condense_detail(str(body), status), body)
+
+
+def _format_job_error(error: "str | dict | None") -> str:
+    """A run's error context, without the raw-dict noise of its empty fields."""
+    if not isinstance(error, dict):
+        return str(error)
+    parts = [str(error.get("message") or error.get("detail") or "unknown error")]
+    error_type = error.get("errorType")
+    if error_type and error_type != "unknown":
+        parts.append(f"[{error_type}]")
+    step = error.get("stepId")
+    if step:
+        parts.append(f"(step {step})")
+    return " ".join(parts)
 
 
 class JobFailedError(RootCauseError):
@@ -45,10 +110,11 @@ class JobFailedError(RootCauseError):
         status (str): The terminal state it ended in.
     """
 
-    def __init__(self, job_id: str, status: str, message: str | None = None) -> None:
+    def __init__(self, job_id: str, status: str, message: "str | dict | None" = None) -> None:
         self.job_id = job_id
         self.status = status
-        super().__init__(f"Job {job_id} ended as '{status}'" + (f": {message}" if message else ""))
+        self.error = message
+        super().__init__(f"Job {job_id} ended as '{status}'" + (f": {_format_job_error(message)}" if message else ""))
 
 
 class JobTimeoutError(RootCauseError):
