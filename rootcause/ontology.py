@@ -168,7 +168,10 @@ class Ontology:
     def _base(self) -> str:
         return f"/api/v1/workspaces/{self._workspace_id}/ontology"
 
-    def _concepts_raw(self, refresh: bool = False) -> list[dict[str, Any]]:
+    def _concepts_raw(self, refresh: bool = True) -> list[dict[str, Any]]:
+        # Always fresh by default: ontology analysis lands asynchronously after
+        # ingest, and a stale listing makes brand-new concepts unresolvable.
+        # The cache only serves tab completion between keystrokes.
         if self._concept_cache is None or refresh:
             envelope = self._transport.request("GET", f"{self._base()}/concepts", params={"limit": 500})
             self._concept_cache = list(envelope.get("data", []))
@@ -213,7 +216,7 @@ class Ontology:
         ]
 
     def _ipython_key_completions_(self) -> list[str]:
-        return [str(concept.get("name")) for concept in self._concepts_raw() if concept.get("name")]
+        return [str(concept.get("name")) for concept in self._concepts_raw(refresh=False) if concept.get("name")]
 
     def _resolve(self, needle: str) -> dict[str, Any]:
         concepts = self._concepts_raw()
