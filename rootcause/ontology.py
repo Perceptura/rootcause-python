@@ -4,7 +4,7 @@ import difflib
 from typing import TYPE_CHECKING, Any
 
 from rootcause._http import Transport
-from rootcause.errors import NotFoundInWorkspaceError
+from rootcause.errors import NotFoundInWorkspaceError, RootCauseApiError, RootCauseError
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -141,6 +141,161 @@ class Ontology:
     def _concept_id(self, needle: str) -> str:
         concept = self._resolve(needle)
         return str(concept.get("id") or concept.get("_id"))
+
+    # Metadata overrides accepted as keyword arguments, mapped to the concept's
+    # metadata field names. Anything else goes through the metadata= dict.
+    _METADATA_KWARGS = {
+        "monotonically_increasing": "isMonotonicallyIncreasing",
+        "monotonically_decreasing": "isMonotonicallyDecreasing",
+        "min_value": "minValue",
+        "max_value": "maxValue",
+        "unit": "unit",
+        "unit_modifier": "unitModifier",
+        "nan_fill_strategy": "nanFillStrategy",
+        "categories": "categories",
+        "date_time_format": "dateTimeFormat",
+        "display_format": "displayFormat",
+        "is_cyclic": "isCyclic",
+        "is_unique": "isUnique",
+    }
+
+    # Concept-level (non-metadata) overrides. Only fields present in the update
+    # body count as edited, so these are sent exclusively when passed.
+    _CONCEPT_KWARGS = {
+        "name": "name",
+        "description": "description",
+        "classification": "conceptClassification",
+        "schema_type": "schemaType",
+        "schema_subtype": "schemaSubtype",
+        "suggested_role": "suggestedRole",
+        "temporal_prerequisites": "temporalPrerequisites",
+    }
+
+    def _fetch_concept(self, concept_id: str) -> dict[str, Any]:
+        envelope = self._transport.request("GET", f"{self._base()}/concepts/{concept_id}")
+        return envelope.get("data", envelope)
+
+    def _put_concept(self, concept_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        envelope = self._transport.request("PUT", f"{self._base()}/concepts/{concept_id}", json_body=body)
+        self._concept_cache = None
+        return envelope.get("data", envelope)
+
+    def _apply_update(
+        self,
+        needle: str,
+        metadata: dict[str, Any],
+        concept_fields: dict[str, Any],
+    ) -> dict[str, Any]:
+        concept_id = self._concept_id(needle)
+        concept = self._fetch_concept(concept_id)
+        body: dict[str, Any] = {"_id": concept_id, "editVersion": concept.get("editVersion", 0), **concept_fields}
+        if metadata:
+            body["metadata"] = metadata
+        try:
+            return self._put_concept(concept_id, body)
+        except RootCauseApiError as error:
+            if error.status != 409:
+                raise
+            # concept changed underneath us — re-read for the fresh editVersion and retry once
+            fresh = self._fetch_concept(concept_id)
+            body["editVersion"] = fresh.get("editVersion", 0)
+            return self._put_concept(concept_id, body)
+
+    def override(self, concept: str, *, metadata: dict[str, Any] | None = None, **overrides: Any) -> dict[str, Any]:
+        """Override a concept's metadata or structure, locked against re-profiling.
+
+        Overridden metadata fields are marked as human-set: the auto-profiler
+        preserves them on every future ingest, and the detected value keeps
+        shadowing underneath (see [`revert`](#revert)). Setting a field back
+        to its detected value unlocks it again.
+
+        ```python
+        onto.override("cumulative_revenue", monotonically_increasing=True, min_value=0)
+        onto.override("temperature", unit="°C", nan_fill_strategy="interpolate")
+        onto.override("churn", suggested_role="target", description="Did the customer leave")
+        ```
+
+        Args:
+            concept: Concept name or id.
+            metadata: Any concept metadata field by its camelCase name, for
+                fields without a keyword below.
+            **overrides: Metadata keywords — `monotonically_increasing`,
+                `monotonically_decreasing`, `min_value`, `max_value`, `unit`,
+                `unit_modifier`, `nan_fill_strategy`, `categories`,
+                `date_time_format`, `display_format`, `is_cyclic`,
+                `is_unique` — and concept-level `name`, `description`,
+                `classification`, `schema_type`, `schema_subtype`,
+                `suggested_role`, `temporal_prerequisites`.
+
+        Returns:
+            The updated concept document.
+        """
+        metadata_update: dict[str, Any] = dict(metadata or {})
+        concept_update: dict[str, Any] = {}
+        unknown: list[str] = []
+        for key, value in overrides.items():
+            if key in self._METADATA_KWARGS:
+                metadata_update[self._METADATA_KWARGS[key]] = value
+            elif key in self._CONCEPT_KWARGS:
+                concept_update[self._CONCEPT_KWARGS[key]] = value
+            else:
+                unknown.append(key)
+        if unknown:
+            known = sorted([*self._METADATA_KWARGS, *self._CONCEPT_KWARGS])
+            raise RootCauseError(
+                f"Unknown override(s) {unknown}; known keywords: {', '.join(known)} "
+                f"(or pass metadata={{...}} with the field's camelCase name)"
+            )
+        if not metadata_update and not concept_update:
+            raise RootCauseError("Nothing to override — pass at least one field")
+        return self._apply_update(concept, metadata_update, concept_update)
+
+    def revert(self, concept: str, *fields: str) -> dict[str, Any]:
+        """Revert overridden metadata fields to their auto-detected values.
+
+        Setting a field back to its detected value also unlocks it, so the
+        profiler owns it again on future ingests.
+
+        Args:
+            concept: Concept name or id.
+            *fields: Fields to revert, as `override` keywords or camelCase
+                metadata names. With none, every locked field reverts.
+
+        Returns:
+            The updated concept document.
+        """
+        concept_id = self._concept_id(concept)
+        doc = self._fetch_concept(concept_id)
+        detected = doc.get("detectedMetadata")
+        locked = list(doc.get("lockedMetadataFields") or [])
+        if not detected:
+            raise RootCauseError(f'Concept "{concept}" has no detected metadata to revert to')
+        wanted = [self._METADATA_KWARGS.get(f, f) for f in fields] if fields else locked
+        missing = [f for f in wanted if f not in locked]
+        if missing:
+            raise RootCauseError(f"Not overridden (nothing to revert): {missing}; locked fields: {locked or 'none'}")
+        metadata = {f: detected.get(f) for f in wanted}
+        return self._apply_update(concept, metadata, {})
+
+    def locks(self, concept: str) -> "pd.DataFrame":
+        """The concept's overridden metadata fields: current value vs detected.
+
+        Args:
+            concept: Concept name or id.
+
+        Returns:
+            One row per locked field, with `value` and `detected` columns.
+        """
+        import pandas as pd
+
+        doc = self._fetch_concept(self._concept_id(concept))
+        metadata = doc.get("metadata") or {}
+        detected = doc.get("detectedMetadata") or {}
+        rows = [
+            {"field": f, "value": metadata.get(f), "detected": detected.get(f)}
+            for f in (doc.get("lockedMetadataFields") or [])
+        ]
+        return pd.DataFrame(rows, columns=["field", "value", "detected"])
 
     def query(
         self,
