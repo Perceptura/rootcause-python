@@ -119,17 +119,23 @@ docs:publish:
     - git config --global user.name "rootcause-sdk CI"
     - AUTHED_URL=$(echo "$DOCS_REPO_URL" | sed -E "s#https://#https://oauth2:$DOCS_PUSH_TOKEN@#")
     - git clone --depth 1 --branch "$DOCS_REPO_BRANCH" "$AUTHED_URL" /tmp/docs-repo
-    # This repo is the source of truth for the SDK pages: the authored pages and
-    # the generated reference are overwritten wholesale. Every other page in the
+    # This repo is the source of truth for the SDK pages, so the whole sdk-*.md
+    # set is replaced rather than merged: clearing first means a page deleted
+    # here disappears there instead of lingering forever. Every other page in the
     # docs repo is left exactly as it is.
+    - rm -f "/tmp/docs-repo/$DOCS_REPO_DIR"/sdk-*.md
     - cp docs-src/sdk-*.md "/tmp/docs-repo/$DOCS_REPO_DIR/"
     - cp "generated-docs/$(basename $DOCS_PAGE_PATH)" "/tmp/docs-repo/$DOCS_PAGE_PATH"
+    - ls -l "/tmp/docs-repo/$DOCS_REPO_DIR"/sdk-*.md
     - python scripts/sync_gitbook_summary.py /tmp/docs-repo/SUMMARY.md --target "$DOCS_PAGE_PATH" --title "$DOCS_PAGE_TITLE"
     - cd /tmp/docs-repo
     - git add -A "$DOCS_REPO_DIR" SUMMARY.md
+    # Print what actually differs, so an empty result is visibly "identical" and
+    # not "wrote the files somewhere else".
+    - git status --short
     - |
       if git diff --cached --quiet; then
-        echo "Docs unchanged; nothing to push."
+        echo "Every SDK page in the docs repo already matches this repo; nothing to push."
         exit 0
       fi
     # Single-quoted: the colon-space in the commit subject would otherwise make
