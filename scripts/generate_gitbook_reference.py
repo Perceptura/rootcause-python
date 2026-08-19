@@ -130,16 +130,13 @@ def render_docstring(obj: griffe.Object) -> list[str]:
         if kind is griffe.DocstringSectionKind.text:
             lines += [fence_indented_code(section.value.strip()), ""]
         elif kind is griffe.DocstringSectionKind.parameters:
-            # Type and default share a column: the signature above already spells
-            # them out, and three columns leave the descriptions room to breathe.
-            lines += ["| Parameter | Type | Description |", "| --- | --- | --- |"]
+            lines += ["| Parameter | Type | Default | Description |", "| --- | --- | --- | --- |"]
             for param in section.value:
-                signature_cell = cell(param.annotation) if param.annotation is not None else ""
-                if param.default is not None:
-                    signature_cell = f"{signature_cell} = {cell(param.default)}".strip()
-                else:
-                    signature_cell = f"{signature_cell} (required)".strip()
-                lines.append(f"| `{param.name}` | `{signature_cell}` | {one_line(param.description)} |")
+                annotation = f"`{cell(param.annotation)}`" if param.annotation is not None else ""
+                default = f"`{cell(param.default)}`" if param.default is not None else "required"
+                lines.append(
+                    f"| `{param.name}` | {annotation} | {default} | {one_line(param.description)} |"
+                )
             lines.append("")
         elif kind is griffe.DocstringSectionKind.attributes:
             lines += ["| Attribute | Type | Description |", "| --- | --- | --- |"]
