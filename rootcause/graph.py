@@ -142,3 +142,8 @@ class Graph:
         edges = self.edges
         header = f"<p><b>Causal graph</b> — {len(self.nodes)} nodes, {len(edges)} edges</p>"
         return f"<div>{header}{edges.head(25)._repr_html_()}</div>"
+
+    def _ipython_display_(self) -> None:
+        from rootcause._display import show
+
+        show(self, lambda: self._twin.console())

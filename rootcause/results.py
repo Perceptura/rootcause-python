@@ -160,7 +160,7 @@ class SimulationResult:
             "GET", f"/api/v1/workspaces/{self._workspace_id}/simulations/{self.run_id}/export/{fmt}"
         )
 
-    def sweep(self, metric: str | None = None) -> "pd.DataFrame":
+    def sweep(self, metric: str | None = None) -> "SweepResult":
         """Full dose-response curve of a range intervention, one metric at a time.
 
         Args:
@@ -168,7 +168,9 @@ class SimulationResult:
                 carries several; the error names them.
 
         Returns:
-            The dose-response curve as a DataFrame.
+            The curve as a [`SweepResult`](#sweepresult): displayed in a
+            notebook it renders the interactive curve, `to_frame()` is the
+            points, and DataFrame attributes pass through.
         """
         pd = _pandas()
         params = {"metric": metric} if metric else {}
@@ -188,7 +190,7 @@ class SimulationResult:
         frame = pd.DataFrame(payload.get("points") or [])
         frame.attrs["metric"] = payload.get("metric")
         frame.attrs["sweptVariable"] = payload.get("sweptVariable")
-        return frame
+        return SweepResult(self, str(payload.get("metric") or metric), frame)
 
     def __repr__(self) -> str:
         scenario_type = (self.scenario or {}).get("type") or self.run.get("scenarioType") or "simulation"
@@ -200,6 +202,70 @@ class SimulationResult:
         except (ValueError, ImportError):
             head = ""
         return f"<div><p><b>{self!r}</b></p>{head}</div>"
+
+    def _ipython_display_(self) -> None:
+        from rootcause import jupyter
+        from rootcause._display import show
+
+        show(self, lambda: jupyter.app(
+            "get_digital_twin_run_result",
+            {"workspaceId": self._workspace_id, "runId": self.run_id},
+            height=640,
+            transport=self._transport,
+        ))
+
+
+class SweepResult:
+    """One metric's dose-response curve off a sweep run.
+
+    Displayed in a notebook it mounts the interactive curve; everywhere else it
+    behaves like its DataFrame — `to_frame()` returns the points, and unknown
+    attributes (`head`, `plot`, …) delegate to it.
+
+    Attributes:
+        metric (str): The metric this curve measures.
+    """
+
+    def __init__(self, run: "SimulationResult", metric: str, frame: "pd.DataFrame") -> None:
+        self._run = run
+        self.metric = metric
+        self._frame = frame
+
+    @property
+    def swept_variable(self) -> str | None:
+        return self._frame.attrs.get("sweptVariable")
+
+    def to_frame(self) -> "pd.DataFrame":
+        return self._frame
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._frame, name)
+
+    def __getitem__(self, key: Any) -> Any:
+        return self._frame[key]
+
+    def __len__(self) -> int:
+        return len(self._frame)
+
+    def __repr__(self) -> str:
+        return f"SweepResult({self.swept_variable or '?'} → {self.metric}, {len(self._frame)} points)"
+
+    def _repr_html_(self) -> str:
+        return f"<div><p><b>{self!r}</b></p>{self._frame.head(15)._repr_html_()}</div>"
+
+    def _ipython_display_(self) -> None:
+        from rootcause import jupyter
+        from rootcause._display import show
+
+        show(self, lambda: jupyter.app(
+            "get_sweep_curve",
+            {
+                "workspaceId": self._run._workspace_id,
+                "digitalTwinRunId": self._run.run_id,
+                "metric": self.metric,
+            },
+            transport=self._run._transport,
+        ))
 
 
 class ForecastResult(SimulationResult):
@@ -324,3 +390,27 @@ class ScoreResult:
         verdicts = self.digest.get("verdictCounts") or {}
         summary = ", ".join(f"{key}={value}" for key, value in verdicts.items() if value)
         return f"ScoreResult(run={self.run_id}, {summary or 'no verdicts'})"
+
+    def _ipython_display_(self) -> None:
+        from rootcause import jupyter
+        from rootcause._display import show
+
+        def mount() -> Any:
+            # The digest is already in hand from the REST readback, so the register
+            # mounts over it directly; its own paging and re-scoring still round-trip
+            # live through the gateway.
+            digest = self.digest
+            if not digest:
+                raise RootCauseError("no digest to mount")
+            return jupyter.app(
+                "score_twin_rows",
+                {"workspaceId": self._workspace_id},
+                height=560,
+                transport=self._transport,
+                result={
+                    "content": [{"type": "text", "text": repr(self)}],
+                    "structuredContent": {"scoreDigest": digest},
+                },
+            )
+
+        show(self, mount)

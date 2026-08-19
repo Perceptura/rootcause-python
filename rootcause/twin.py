@@ -1026,3 +1026,19 @@ class EnvSubset:
             "/".join(item.values()) if isinstance(item, dict) else str(item) for item in self._requested
         )
         return f"EnvSubset({self.twin.name!r}, environments=[{labels}])"
+
+    def _repr_html_(self) -> str:
+        return f"<div><p><b>{self!r}</b></p>{self.environments.head(20)._repr_html_()}</div>"
+
+    def _ipython_display_(self) -> None:
+        from rootcause import jupyter
+        from rootcause._display import show
+
+        show(self, lambda: jupyter.app(
+            "list_twin_environments",
+            {
+                "workspaceId": self.twin._workspace_id,
+                "digitalTwinVersionId": self.twin.version_id,
+            },
+            transport=self.twin._transport,
+        ))

@@ -58,6 +58,7 @@ EXCLUDE = {"compile_where", "compile_do"}
 # Names re-exported into `rootcause` but documented under their own module.
 TOP_LEVEL_ONLY_FUNCTIONS = [
     "login", "whoami", "workspaces", "workspace", "discover", "load_twin", "render_widget",
+    "auto_apps",
 ]
 
 
@@ -248,6 +249,11 @@ def render_module(module: griffe.Module, heading: str, blurb: str, top_level: bo
     else:
         members.sort(key=lambda item: item[1].lineno or 0)
     for name, member in members:
+        if isinstance(member, griffe.Alias):
+            try:
+                member = member.final_target
+            except Exception:
+                continue
         if isinstance(member, griffe.Function):
             lines += render_function(member, "rc." if top_level else "", 2)
         elif isinstance(member, griffe.Class):

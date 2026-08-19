@@ -21,6 +21,7 @@ names resolve case-insensitively, with close-match suggestions on a miss.
 from typing import TYPE_CHECKING, Any
 
 from rootcause import direct as _direct
+from rootcause._display import auto_apps
 from rootcause._http import Transport, resolve_transport
 from rootcause.errors import (
     AuthenticationError,
@@ -247,6 +248,7 @@ __all__ = [
     "add",
     "adjust_prob",
     "at",
+    "auto_apps",
     "discover",
     "load_twin",
     "login",

@@ -209,6 +209,7 @@ def app(
     theme: str = "",
     height: int = 480,
     transport: Transport | None = None,
+    result: dict[str, Any] | None = None,
 ) -> Any:
     """Run an MCP tool and render its interactive app under the cell.
 
@@ -222,6 +223,9 @@ def app(
         theme: `light`, `dark`, or empty to follow the notebook.
         height: Height of the mounted app, in pixels.
         transport: Use a specific session instead of the module-level one.
+        result: A pre-computed tool result to render instead of executing the
+            tool — `{"content": [...], "structuredContent": {...}}`. The app's
+            own controls still round-trip live through the gateway.
 
     Returns:
         The widget, ready for a notebook cell to display. Requires the
@@ -232,7 +236,8 @@ def app(
     resolved = transport or rc._transport()
     gateway = McpGateway(resolved)
 
-    result = gateway.call_tool(tool, arguments or {})
+    if result is None:
+        result = gateway.call_tool(tool, arguments or {})
     bundle = gateway.read_bundle(gateway.app_uri_for(tool))
 
     widget_cls = _widget_class()
