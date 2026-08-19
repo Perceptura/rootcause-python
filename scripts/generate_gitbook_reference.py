@@ -76,10 +76,50 @@ def signature(obj: griffe.Function, qualifier: str = "") -> str:
     return wrap_signature(f"{qualifier}{obj.name}(", parts, f"){returns}")
 
 
-def docstring(obj: griffe.Object) -> str:
+def render_docstring(obj: griffe.Object) -> list[str]:
+    """The docstring as markdown: prose verbatim, sections as tables and blocks."""
     if obj.docstring is None:
-        return "_Undocumented; the signature above is the contract._"
-    return obj.docstring.value.strip()
+        return ["_Undocumented; the signature above is the contract._", ""]
+
+    lines: list[str] = []
+    for section in obj.docstring.parsed:
+        kind = section.kind
+        if kind is griffe.DocstringSectionKind.text:
+            lines += [section.value.strip(), ""]
+        elif kind is griffe.DocstringSectionKind.parameters:
+            lines += ["| Parameter | Type | Default | Description |", "| --- | --- | --- | --- |"]
+            for param in section.value:
+                annotation = f"`{param.annotation}`" if param.annotation is not None else ""
+                default = f"`{param.default}`" if param.default is not None else "required"
+                lines.append(
+                    f"| `{param.name}` | {annotation} | {default} | {one_line(param.description)} |"
+                )
+            lines.append("")
+        elif kind is griffe.DocstringSectionKind.returns:
+            for returned in section.value:
+                annotation = f" (`{returned.annotation}`)" if returned.annotation is not None else ""
+                lines += [f"**Returns**{annotation}: {one_line(returned.description)}", ""]
+        elif kind is griffe.DocstringSectionKind.raises:
+            lines += ["**Raises**", ""]
+            for raised in section.value:
+                lines.append(f"- `{raised.annotation}`: {one_line(raised.description)}")
+            lines.append("")
+        elif kind is griffe.DocstringSectionKind.examples:
+            lines += ["**Examples**", ""]
+            for part_kind, part in section.value:
+                if part_kind is griffe.DocstringSectionKind.examples:
+                    lines += ["```python", part.strip(), "```", ""]
+                else:
+                    lines += [str(part).strip(), ""]
+        else:
+            # Any section kind not handled above still reads fine as its own text.
+            lines += [str(section.value).strip(), ""]
+    return lines
+
+
+def one_line(text: str) -> str:
+    """Collapse a description to one line, safe to drop inside a table cell."""
+    return " ".join(text.split()).replace("|", "\\|")
 
 
 def is_public(name: str) -> bool:
@@ -99,16 +139,15 @@ def render_function(obj: griffe.Function, qualifier: str, level: int) -> list[st
         signature(obj, qualifier),
         "```",
         "",
-        docstring(obj),
-        "",
+        *render_docstring(obj),
     ]
 
 
 def render_class(obj: griffe.Class, level: int) -> list[str]:
-    lines = [f"{'#' * level} {obj.name}", "", docstring(obj), ""]
+    lines = [f"{'#' * level} {obj.name}", "", *render_docstring(obj)]
     init = obj.members.get("__init__")
     if isinstance(init, griffe.Function) and init.docstring is not None:
-        lines += ["```python", signature(init).replace("__init__", obj.name), "```", "", docstring(init), ""]
+        lines += ["```python", signature(init).replace("__init__", obj.name), "```", "", *render_docstring(init)]
 
     # griffe models @property as an Attribute labelled "property", not as a
     # Function, so properties have to be collected separately or they vanish.
