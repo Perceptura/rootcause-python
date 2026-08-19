@@ -12,6 +12,8 @@ mkdocs build rewrites those to absolute docs.rootcause.ai URLs, and leaves them
 relative for GitBook.
 
 - `sdk-getting-started.md` is the top page: what the SDK is, plus the quickstart.
-- `sdk-api-reference.md` is the curated reference, written by hand.
-- The generated reference is not here: `scripts/generate_gitbook_reference.py`
-  builds it from the docstrings on every pipeline run.
+- The API reference is not here: `scripts/generate_gitbook_reference.py` builds
+  it from the docstrings on every pipeline run and publishes it as
+  `sdk-api-reference.md`, the path the hand-written page used to occupy. Its
+  argument tables come from the `Args:` sections in the SDK's own docstrings, so
+  edit those rather than the page.

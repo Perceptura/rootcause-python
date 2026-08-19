@@ -37,7 +37,6 @@ nav:
       - Ontology Queries: sdk-ontology-queries.md
       - Interactive Apps in Notebooks: sdk-notebook-apps.md
   - Reference:
-      - Python API Reference: sdk-api-reference.md
       - Top-level API: reference/index.md
       - Workspace and data: reference/workspace.md
       - Twin: reference/twin.md

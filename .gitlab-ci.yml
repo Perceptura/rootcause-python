@@ -13,10 +13,12 @@ variables:
   # docs-src/ publish here under their own filenames, which is why those
   # filenames match: the relative links between them resolve unchanged.
   DOCS_REPO_DIR: api
-  # Repo-relative path of the generated reference, and its nav title in
-  # SUMMARY.md. The authored sdk-api-reference.md is a separate, curated page.
-  DOCS_PAGE_PATH: api/sdk-generated-reference.md
-  DOCS_PAGE_TITLE: Generated API Reference
+  # The generated reference publishes at the path the hand-written one used, so
+  # its URL and its SUMMARY.md nav entry carry over untouched.
+  DOCS_PAGE_PATH: api/sdk-api-reference.md
+  DOCS_PAGE_TITLE: Python API Reference
+  # The interim page the generated reference lived at before it took over above.
+  DOCS_RETIRED_PAGE: api/sdk-generated-reference.md
 
 generate:
   stage: generate
@@ -128,6 +130,7 @@ docs:publish:
     - cp "generated-docs/$(basename $DOCS_PAGE_PATH)" "/tmp/docs-repo/$DOCS_PAGE_PATH"
     - ls -l "/tmp/docs-repo/$DOCS_REPO_DIR"/sdk-*.md
     - python scripts/sync_gitbook_summary.py /tmp/docs-repo/SUMMARY.md --target "$DOCS_PAGE_PATH" --title "$DOCS_PAGE_TITLE"
+    - python scripts/sync_gitbook_summary.py /tmp/docs-repo/SUMMARY.md --target "$DOCS_RETIRED_PAGE" --remove
     - cd /tmp/docs-repo
     - git add -A "$DOCS_REPO_DIR" SUMMARY.md
     # Print what actually differs, so an empty result is visibly "identical" and

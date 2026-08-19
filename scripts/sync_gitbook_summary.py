@@ -10,7 +10,7 @@ import argparse
 import sys
 from pathlib import Path
 
-ANCHOR = "* [Python API Reference](api/sdk-api-reference.md)"
+ANCHOR = "* [Interactive Apps in Notebooks](api/sdk-notebook-apps.md)"
 
 
 def sync(summary: Path, target: str, title: str) -> bool:
@@ -41,12 +41,37 @@ def sync(summary: Path, target: str, title: str) -> bool:
     )
 
 
+def remove(summary: Path, target: str) -> bool:
+    """Drop the entry for a retired page. Returns True when the file changed."""
+    with summary.open(newline="") as handle:
+        raw = handle.read()
+    newline = "\r\n" if "\r\n" in raw else "\n"
+    lines = raw.splitlines()
+    kept = [line for line in lines if f"({target})" not in line]
+    if len(kept) == len(lines):
+        return False
+    with summary.open("w", newline="") as handle:
+        handle.write(newline.join(kept) + newline)
+    return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("summary", type=Path, help="Path to the docs repo's SUMMARY.md")
     parser.add_argument("--target", required=True, help="Repo-relative path of the generated page")
     parser.add_argument("--title", default="Generated API Reference", help="Nav title for the page")
+    parser.add_argument(
+        "--remove", action="store_true",
+        help="Drop the entry for a retired page instead of ensuring it exists.",
+    )
     args = parser.parse_args()
+
+    if args.remove:
+        if remove(args.summary, args.target):
+            print(f"Removed {args.target} from {args.summary}")
+        else:
+            print(f"{args.target} is not in {args.summary}")
+        return 0
 
     if sync(args.summary, args.target, args.title):
         print(f"Added {args.target} to {args.summary}")

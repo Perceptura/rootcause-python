@@ -45,7 +45,6 @@ AUTHORED_PAGES = [
     "sdk-sources-from-connectors.md",
     "sdk-ontology-queries.md",
     "sdk-notebook-apps.md",
-    "sdk-api-reference.md",
 ]
 
 # Link targets that resolve inside the GitBook docs but not inside this site.
@@ -56,6 +55,9 @@ AUTHORED_PAGES = [
 # a .md file.
 LINK_REWRITES = {
     INDEX_SOURCE: "index.md",
+    # The curated reference page was retired: the generated reference took over
+    # its published path, and this site has the mkdocstrings pages instead.
+    "sdk-api-reference.md": "reference/index.md",
     "../api-and-integrations/rest-api-reference/": "https://docs.rootcause.ai/api-and-integrations/rest-api-reference",
     "api-access.md": "https://docs.rootcause.ai/api-and-integrations/api-access",
 }
