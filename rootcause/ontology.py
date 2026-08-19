@@ -87,6 +87,76 @@ class OntologyQueryResult:
         return f"<div>{prefix}{pd.DataFrame(self.rows).head(20)._repr_html_()}</div>"
 
 
+class Concept:
+    """A handle to one ontology concept — resolve it once, then operate on it.
+
+    Supports dict-style access to the underlying document
+    (`concept["metadata"]`), so it drops in wherever the raw doc was used.
+    """
+
+    def __init__(self, ontology: "Ontology", doc: dict[str, Any]) -> None:
+        self._ontology = ontology
+        self.doc = doc
+
+    @property
+    def id(self) -> str:
+        return str(self.doc.get("id") or self.doc.get("_id"))
+
+    @property
+    def name(self) -> str:
+        return str(self.doc.get("name", self.id))
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        return dict(self.doc.get("metadata") or {})
+
+    @property
+    def detected(self) -> dict[str, Any]:
+        """What the auto-profiler detected, shadowing any overrides."""
+        return dict(self.doc.get("detectedMetadata") or {})
+
+    def __getitem__(self, key: str) -> Any:
+        return self.doc[key]
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.doc.get(key, default)
+
+    def refresh(self) -> "Concept":
+        """Re-read the concept from the platform."""
+        self.doc = self._ontology._fetch_concept(self.id)
+        return self
+
+    def override(self, *, metadata: dict[str, Any] | None = None, **overrides: Any) -> "Concept":
+        """Override this concept's metadata or structure, locked against re-profiling.
+
+        See [`Ontology.override`](#override) for the keyword vocabulary.
+
+        Returns:
+            This handle, refreshed with the updated document.
+        """
+        self.doc = self._ontology.override(self, metadata=metadata, **overrides)
+        return self
+
+    def revert(self, *fields: str) -> "Concept":
+        """Revert overridden fields to their detected values; all locked fields when none given.
+
+        Returns:
+            This handle, refreshed with the updated document.
+        """
+        self.doc = self._ontology.revert(self, *fields)
+        return self
+
+    @property
+    def locks(self) -> "pd.DataFrame":
+        """The overridden metadata fields: current value vs detected."""
+        return self._ontology.locks(self)
+
+    def __repr__(self) -> str:
+        locked = len(self.doc.get("lockedMetadataFields") or [])
+        suffix = f", overrides={locked}" if locked else ""
+        return f"Concept({self.name!r}, type={self.doc.get('schemaType')}{suffix})"
+
+
 class Ontology:
     """The workspace's semantic layer: concepts, and the query engine over them."""
 
@@ -120,8 +190,27 @@ class Ontology:
         ]
         return pd.DataFrame(rows, columns=["id", "name", "type", "classification", "sources"])
 
-    def __getitem__(self, name: str) -> dict[str, Any]:
-        return self._resolve(name)
+    def __getitem__(self, name: str) -> "Concept":
+        return Concept(self, self._resolve(name))
+
+    def concept(self, needle: "str | Concept") -> "Concept":
+        """Resolve a concept by name or id into a [`Concept`](#concept) handle.
+
+        Raises when the name matches more than one concept — resolve those
+        through [`matching`](#matching) or an id.
+        """
+        if isinstance(needle, Concept):
+            return needle
+        return Concept(self, self._resolve(needle))
+
+    def matching(self, name: str) -> "list[Concept]":
+        """Every concept whose name matches — the disambiguation escape hatch."""
+        lowered = name.lower()
+        return [
+            Concept(self, doc)
+            for doc in self._concepts_raw()
+            if doc.get("name") == name or str(doc.get("name", "")).lower() == lowered
+        ]
 
     def _ipython_key_completions_(self) -> list[str]:
         return [str(concept.get("name")) for concept in self._concepts_raw() if concept.get("name")]
@@ -153,7 +242,9 @@ class Ontology:
         names = [str(concept.get("name")) for concept in concepts if concept.get("name")]
         raise NotFoundInWorkspaceError("ontology concept", needle, difflib.get_close_matches(needle, names, n=5))
 
-    def _concept_id(self, needle: str) -> str:
+    def _concept_id(self, needle: "str | Concept") -> str:
+        if isinstance(needle, Concept):
+            return needle.id
         concept = self._resolve(needle)
         return str(concept.get("id") or concept.get("_id"))
 
@@ -197,7 +288,7 @@ class Ontology:
 
     def _apply_update(
         self,
-        needle: str,
+        needle: "str | Concept",
         metadata: dict[str, Any],
         concept_fields: dict[str, Any],
     ) -> dict[str, Any]:
@@ -207,16 +298,19 @@ class Ontology:
         if metadata:
             body["metadata"] = metadata
         try:
-            return self._put_concept(concept_id, body)
+            self._put_concept(concept_id, body)
         except RootCauseApiError as error:
             if error.status != 409:
                 raise
             # concept changed underneath us — re-read for the fresh editVersion and retry once
             fresh = self._fetch_concept(concept_id)
             body["editVersion"] = fresh.get("editVersion", 0)
-            return self._put_concept(concept_id, body)
+            self._put_concept(concept_id, body)
+        # the write path answers a status envelope on some deployments; the
+        # re-read is the authoritative updated document either way
+        return self._fetch_concept(concept_id)
 
-    def override(self, concept: str, *, metadata: dict[str, Any] | None = None, **overrides: Any) -> dict[str, Any]:
+    def override(self, concept: "str | Concept", *, metadata: dict[str, Any] | None = None, **overrides: Any) -> dict[str, Any]:
         """Override a concept's metadata or structure, locked against re-profiling.
 
         Overridden metadata fields are marked as human-set: the auto-profiler
@@ -265,7 +359,7 @@ class Ontology:
             raise RootCauseError("Nothing to override — pass at least one field")
         return self._apply_update(concept, metadata_update, concept_update)
 
-    def revert(self, concept: str, *fields: str) -> dict[str, Any]:
+    def revert(self, concept: "str | Concept", *fields: str) -> dict[str, Any]:
         """Revert overridden metadata fields to their auto-detected values.
 
         Setting a field back to its detected value also unlocks it, so the
@@ -292,7 +386,7 @@ class Ontology:
         metadata = {f: detected.get(f) for f in wanted}
         return self._apply_update(concept, metadata, {})
 
-    def locks(self, concept: str) -> "pd.DataFrame":
+    def locks(self, concept: "str | Concept") -> "pd.DataFrame":
         """The concept's overridden metadata fields: current value vs detected.
 
         Args:
