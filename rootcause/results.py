@@ -98,9 +98,20 @@ class SimulationResult:
     def to_frame(self, path: str | None = None) -> "pd.DataFrame":
         """Tabularize the result payload.
 
-        Simulation families answer with different shapes; this finds record
-        lists in the payload. With several candidates, pass path="a.b" to pick
-        one — the error message lists what is available.
+        Simulation families answer with different shapes, so this finds record
+        lists in the payload.
+
+        Args:
+            path: Which candidate table to use, as a dotted path. With several
+                candidates and no path, the largest wins; the error message from
+                a bad path lists what exists.
+
+        Returns:
+            The chosen records as a DataFrame.
+
+        Raises:
+            ValueError: No tabular records in the payload, or no records at
+                `path`.
         """
         pd = _pandas()
         candidates = _walk_records(self.results)
@@ -126,6 +137,14 @@ class SimulationResult:
         return [".".join(path) for path, _ in _walk_records(self.results)]
 
     def export(self, fmt: str = "csv") -> bytes:
+        """The platform's own export of the run.
+
+        Args:
+            fmt: Export format, for example `csv`.
+
+        Returns:
+            The export's raw bytes.
+        """
         return self._transport.request_bytes(
             "GET", f"/api/v1/workspaces/{self._workspace_id}/simulations/{self.run_id}/export/{fmt}"
         )
@@ -133,8 +152,12 @@ class SimulationResult:
     def sweep(self, metric: str | None = None) -> "pd.DataFrame":
         """Full dose-response curve of a range intervention, one metric at a time.
 
-        With metric=None and several metrics on the run, raises with the list of
-        available metric names.
+        Args:
+            metric: Which metric's curve to return. Required when the run
+                carries several; the error names them.
+
+        Returns:
+            The dose-response curve as a DataFrame.
         """
         pd = _pandas()
         params = {"metric": metric} if metric else {}
@@ -248,7 +271,15 @@ class ScoreResult:
         return dict((self._first_page.get("data") or {}).get("digest") or {})
 
     def to_frame(self, max_rows: int | None = None) -> "pd.DataFrame":
-        """Every scored row with its full change list, paged transparently."""
+        """Every scored row with its full change list, paged transparently.
+
+        Args:
+            max_rows: Stop after this many rows. Fetches everything when
+                omitted.
+
+        Returns:
+            One row per scored input, with its change list.
+        """
         pd = _pandas()
         if self._first_page is None:
             self._first_page = self._page()

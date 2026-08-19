@@ -37,6 +37,15 @@ class OntologyQueryResult:
         self.query = payload.get("query") or request_body.get("query")
 
     def to_frame(self, max_rows: int | None = None) -> "pd.DataFrame":
+        """Every row, paging transparently.
+
+        Args:
+            max_rows: Stop after this many rows. Fetches everything when
+                omitted.
+
+        Returns:
+            The rows as a DataFrame.
+        """
         import pandas as pd
 
         rows = list(self.rows)
@@ -133,8 +142,22 @@ class Ontology:
     ) -> OntologyQueryResult:
         """Execute a structured ontology query; concepts go by name or id.
 
-        where clauses are (concept, operator, value) with operators
-        eq/neq/gt/gte/lt/lte/between/in/contains or their symbols.
+        Args:
+            select: Concepts to return, by name or id.
+            where: Filters as `(concept, operator, value)`. Operators are
+                `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `between`, `in`,
+                `contains`, or their symbols.
+            group_by: Concepts to group by.
+            order_by: Concept, or concepts, to order by.
+            aggregate: Aggregate function per concept, as
+                `{"Revenue": "sum"}`.
+            sources: Restrict the query to these source ids.
+            limit: Row cap on the whole query.
+            wide: Return one column per concept rather than long format.
+            page_size: Rows per page fetched from the API.
+
+        Returns:
+            An [`OntologyQueryResult`](#ontologyqueryresult).
         """
         query: dict[str, Any] = {
             "conceptIds": [self._concept_id(name) for name in (select or [])],
@@ -160,7 +183,16 @@ class Ontology:
         return OntologyQueryResult(self, self._post_query(body), body)
 
     def ask(self, prompt: str, page_size: int = 1000) -> OntologyQueryResult:
-        """Natural-language question, translated server-side; the structured query is echoed back."""
+        """Natural-language question, translated server-side.
+
+        Args:
+            prompt: The question, in plain language.
+            page_size: Rows per page fetched from the API.
+
+        Returns:
+            An [`OntologyQueryResult`](#ontologyqueryresult); `result.query` is
+            the structured query the translator produced.
+        """
         body = {"prompt": prompt, "limit": page_size}
         payload = self._post_query(body)
         result = OntologyQueryResult(self, payload, {"query": payload.get("query"), "limit": page_size})

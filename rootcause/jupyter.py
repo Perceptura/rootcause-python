@@ -209,12 +209,23 @@ def app(
     theme: str = "",
     height: int = 480,
     transport: Transport | None = None,
-):
+) -> Any:
     """Run an MCP tool and render its interactive app under the cell.
 
     The tool executes server-side with the session's credentials; its App
     bundle renders the result and any controls it carries (re-run scenario,
     expand table, approve graph change) round-trip live through the gateway.
+
+    Args:
+        tool: MCP tool name, for example `query_causal_graph`.
+        arguments: The tool's arguments.
+        theme: `light`, `dark`, or empty to follow the notebook.
+        height: Height of the mounted app, in pixels.
+        transport: Use a specific session instead of the module-level one.
+
+    Returns:
+        The widget, ready for a notebook cell to display. Requires the
+        `jupyter` extra.
     """
     import rootcause as rc
 
