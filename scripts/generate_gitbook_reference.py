@@ -92,6 +92,33 @@ def signature(obj: griffe.Function, qualifier: str = "") -> str:
     return wrap_signature(f"{qualifier}{obj.name}(", parts, f"){returns}")
 
 
+def fence_indented_code(text: str) -> str:
+    """Turn indented code blocks into fenced python ones.
+
+    A docstring writes example code as an indented block, which markdown renders
+    as code but with no language, so GitBook cannot highlight it.
+    """
+    out: list[str] = []
+    block: list[str] = []
+
+    def flush() -> None:
+        if not block:
+            return
+        while block and not block[-1].strip():
+            block.pop()
+        out.extend(["```python", *(line[4:] for line in block), "```", ""])
+        block.clear()
+
+    for line in text.splitlines():
+        if line.startswith("    ") or (block and not line.strip()):
+            block.append(line)
+            continue
+        flush()
+        out.append(line)
+    flush()
+    return "\n".join(out)
+
+
 def render_docstring(obj: griffe.Object) -> list[str]:
     """The docstring as markdown: prose verbatim, sections as tables and blocks."""
     if obj.docstring is None:
@@ -101,15 +128,18 @@ def render_docstring(obj: griffe.Object) -> list[str]:
     for section in obj.docstring.parsed:
         kind = section.kind
         if kind is griffe.DocstringSectionKind.text:
-            lines += [section.value.strip(), ""]
+            lines += [fence_indented_code(section.value.strip()), ""]
         elif kind is griffe.DocstringSectionKind.parameters:
-            lines += ["| Parameter | Type | Default | Description |", "| --- | --- | --- | --- |"]
+            # Type and default share a column: the signature above already spells
+            # them out, and three columns leave the descriptions room to breathe.
+            lines += ["| Parameter | Type | Description |", "| --- | --- | --- |"]
             for param in section.value:
-                annotation = f"`{cell(param.annotation)}`" if param.annotation is not None else ""
-                default = f"`{cell(param.default)}`" if param.default is not None else "required"
-                lines.append(
-                    f"| `{param.name}` | {annotation} | {default} | {one_line(param.description)} |"
-                )
+                signature_cell = cell(param.annotation) if param.annotation is not None else ""
+                if param.default is not None:
+                    signature_cell = f"{signature_cell} = {cell(param.default)}".strip()
+                else:
+                    signature_cell = f"{signature_cell} (required)".strip()
+                lines.append(f"| `{param.name}` | `{signature_cell}` | {one_line(param.description)} |")
             lines.append("")
         elif kind is griffe.DocstringSectionKind.attributes:
             lines += ["| Attribute | Type | Description |", "| --- | --- | --- |"]
@@ -275,7 +305,7 @@ def build() -> dict[str, str]:
     # The package docstring carries the conventions that hold across the surface.
     for section in package.docstring.parsed if package.docstring else []:
         if section.kind is griffe.DocstringSectionKind.text:
-            index += [section.value.strip(), ""]
+            index += [fence_indented_code(section.value.strip()), ""]
 
     pages: dict[str, str] = {}
     for stem, heading, module_path, blurb in SECTIONS:
