@@ -14,7 +14,6 @@ is never touched by this script.
 """
 
 import argparse
-import subprocess
 import sys
 from pathlib import Path
 
@@ -23,13 +22,6 @@ import griffe
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 TITLE = "Python SDK: Generated API Reference"
-
-PREAMBLE = """\
-Every public name in `rootcause-sdk`, generated directly from the package's type
-annotations and docstrings. It is regenerated on each release, so it never drifts
-from the installed code. For the curated walkthrough of the same surface, with
-worked examples, see [Python API Reference](sdk-api-reference.md).
-"""
 
 # (heading, module path, blurb). Order is the reading order of the page.
 SECTIONS: list[tuple[str, str, str]] = [
@@ -156,23 +148,6 @@ def render_module(module: griffe.Module, heading: str, blurb: str, top_level: bo
     return lines
 
 
-def provenance() -> str:
-    version = "unknown"
-    pyproject = (REPO_ROOT / "pyproject.toml").read_text()
-    for line in pyproject.splitlines():
-        if line.startswith("version = "):
-            version = line.split('"')[1]
-            break
-    try:
-        sha = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            cwd=REPO_ROOT, capture_output=True, text=True, check=True,
-        ).stdout.strip()
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        sha = "unknown"
-    return f"Generated from `rootcause-sdk` {version} (`{sha}`). Do not edit by hand: edit the docstrings in the SDK and this page follows."
-
-
 def build() -> str:
     package = griffe.load(
         "rootcause",
@@ -180,7 +155,7 @@ def build() -> str:
         resolve_aliases=True,
         search_paths=[str(REPO_ROOT)],
     )
-    lines = [f"# {TITLE}", "", PREAMBLE.strip(), "", f"> {provenance()}", ""]
+    lines = [f"# {TITLE}", ""]
     for heading, module_path, blurb in SECTIONS:
         module = package if module_path == "rootcause" else package[module_path.split(".", 1)[1]]
         lines += render_module(module, heading, blurb, top_level=module_path == "rootcause")
