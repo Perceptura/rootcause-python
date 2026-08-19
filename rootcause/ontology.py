@@ -318,11 +318,17 @@ class Ontology:
         shadowing underneath (see [`revert`](#revert)). Setting a field back
         to its detected value unlocks it again.
 
+        The idiomatic flow resolves the concept once and operates on the
+        [`Concept`](#concept) handle:
+
         ```python
-        onto.override("cumulative_revenue", monotonically_increasing=True, min_value=0)
-        onto.override("temperature", unit="°C", nan_fill_strategy="interpolate")
-        onto.override("churn", suggested_role="target", description="Did the customer leave")
+        revenue = onto["Revenue"]
+        revenue.override(monotonically_increasing=True, min_value=0)
+        revenue.override(unit="GBP", nan_fill_strategy="interpolate")
+        revenue.revert("unit")
         ```
+
+        This method also accepts a name or id directly as a convenience.
 
         Args:
             concept: Concept name or id.
