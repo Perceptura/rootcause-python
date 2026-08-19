@@ -30,7 +30,14 @@ theme:
 
 nav:
   - Getting started: index.md
-  - API reference:
+  - Guides:
+      - Working with Digital Twins: sdk-working-with-twins.md
+      - Temporal and Panel Twins: sdk-temporal-and-panel-twins.md
+      - Sources from Connectors: sdk-sources-from-connectors.md
+      - Ontology Queries: sdk-ontology-queries.md
+      - Interactive Apps in Notebooks: sdk-notebook-apps.md
+  - Reference:
+      - Python API Reference: sdk-api-reference.md
       - Top-level API: reference/index.md
       - Workspace and data: reference/workspace.md
       - Twin: reference/twin.md
@@ -91,3 +98,4 @@ markdown_extensions:
 
 watch:
   - rootcause
+  - docs-src
