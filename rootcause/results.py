@@ -279,7 +279,8 @@ class ForecastResult(SimulationResult):
     """Forecast run with a tidy long-format frame: environment, series, timestamp, values.
 
     Everything on [`SimulationResult`](#simulationresult) applies; `to_frame()`
-    additionally carries an `environment` column.
+    additionally carries an `environment` column on panel runs and a `variable`
+    column when several targets were forecast, so no series is ever dropped.
     """
 
     @staticmethod
@@ -308,6 +309,21 @@ class ForecastResult(SimulationResult):
                     frames.append(frame)
             if frames:
                 return pd.concat(frames, ignore_index=True)
+        # A multi-target forecast stores one series per variable under `results`;
+        # picking the largest would silently drop every other target.
+        by_parent: dict[tuple[str, ...], list[tuple[str, list[dict[str, Any]]]]] = {}
+        for candidate_path, records in _walk_records(self.results):
+            if len(candidate_path) >= 2 and candidate_path[-2] == "results":
+                by_parent.setdefault(candidate_path[:-1], []).append((candidate_path[-1], records))
+        series_groups = [group for group in by_parent.values() if len(group) > 1]
+        if series_groups:
+            group = max(series_groups, key=lambda g: sum(len(records) for _, records in g))
+            frames = []
+            for variable, records in group:
+                frame = pd.DataFrame(records)
+                frame.insert(0, "variable", variable)
+                frames.append(frame)
+            return pd.concat(frames, ignore_index=True)
         return super().to_frame()
 
 

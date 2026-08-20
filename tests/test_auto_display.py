@@ -133,3 +133,33 @@ def test_env_subset_mounts_the_environment_listing(transport, mounts, fake_ipyth
     subset._ipython_display_()
     assert mounts[-1]["tool"] == "list_twin_environments"
     assert mounts[-1]["arguments"] == {"workspaceId": WS, "digitalTwinVersionId": "v1"}
+
+
+def test_multi_target_forecast_frame_keeps_every_series(transport):
+    from rootcause.results import ForecastResult
+
+    result = ForecastResult(transport, WS, "run-f", {"status": "completed"}, {"type": "forecast"})
+    result._results = {
+        "1.0.0": {
+            "results": {
+                "Z": [{"timestamp": 1, "prediction": 1.0}, {"timestamp": 2, "prediction": 1.1}],
+                "Y": [{"timestamp": 1, "prediction": 5.0}],
+            },
+            "changepoints": {"Z": [{"timestamp": 1, "kind": "trend"}]},
+        }
+    }
+
+    frame = result.to_frame()
+    assert sorted(frame["variable"].unique()) == ["Y", "Z"]
+    assert len(frame) == 3
+
+
+def test_single_target_forecast_frame_is_unchanged(transport):
+    from rootcause.results import ForecastResult
+
+    result = ForecastResult(transport, WS, "run-f", {"status": "completed"}, {"type": "forecast"})
+    result._results = {"1.0.0": {"results": {"Z": [{"timestamp": 1, "prediction": 1.0}]}}}
+
+    frame = result.to_frame()
+    assert "variable" not in frame.columns
+    assert list(frame["prediction"]) == [1.0]
