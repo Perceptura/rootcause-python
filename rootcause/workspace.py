@@ -1,12 +1,17 @@
 """Platform-mode handles: a workspace and the sources, views, and connectors in it."""
 
 import difflib
-import io
 import time
 from typing import TYPE_CHECKING, Any, Callable, Iterator
 
-from rootcause._http import Transport, poll_job
-from rootcause.errors import NotFoundInWorkspaceError, RootCauseError
+from rootcause import _guard
+from rootcause._http import Transport, expect, poll_job
+from rootcause.errors import (
+    InvalidArgumentError,
+    MalformedResponseError,
+    NotFoundInWorkspaceError,
+    RootCauseError,
+)
 from rootcause.ontology import Ontology
 from rootcause.twin import Twin
 
@@ -98,23 +103,23 @@ class Source:
         return pd.DataFrame(entries)
 
     def to_frame(self) -> "pd.DataFrame":
-        import pandas as pd
-
         blob = self._transport.request_bytes("GET", f"{self._path()}/export/parquet")
-        return pd.read_parquet(io.BytesIO(blob))
+        return _guard.from_parquet(blob, f'source "{self.name}"')
 
     def extend(self, frame: "pd.DataFrame") -> None:
         """Append new rows to this source. Blocks until the rows are ingested.
 
         Args:
             frame: Rows to append. The schema must match the source.
+
+        Raises:
+            InvalidArgumentError: `frame` is not a usable, non-empty DataFrame.
         """
-        buffer = io.BytesIO()
-        frame.to_parquet(buffer, index=False)
+        content = _guard.to_parquet(_guard.frame(frame))
         self._transport.request(
             "POST",
             f"{self._path()}/extend",
-            content=buffer.getvalue(),
+            content=content,
             headers={"Content-Type": "application/octet-stream", "x-filename": f"{self.name}-extend.parquet"},
         )
 
@@ -152,10 +157,8 @@ class DataView:
         return pd.DataFrame(entries)
 
     def to_frame(self) -> "pd.DataFrame":
-        import pandas as pd
-
         blob = self._transport.request_bytes("GET", f"{self._path()}/export/parquet")
-        return pd.read_parquet(io.BytesIO(blob))
+        return _guard.from_parquet(blob, f'dataset "{self.name}"')
 
     def records(self, limit: int = 100, cursor: str | None = None) -> list[dict[str, Any]]:
         """One page of rows as dicts.
@@ -240,6 +243,8 @@ class Connector:
             json_body={"config": {"query": query, **config}, "limit": limit},
         )
         data = envelope.get("data", envelope)
+        if not isinstance(data, dict):
+            raise MalformedResponseError(f"The query preview answered {type(data).__name__}, not a result payload")
         if not data.get("success", False):
             raise RootCauseError(f"Query preview failed: {data.get('error', 'unknown error')}")
         columns = [c["name"] for c in data.get("columns", [])]
@@ -295,7 +300,7 @@ class Connector:
             f"/api/v1/connectors/{self.id}/import",
             json_body=body,
         )
-        job_id = str(envelope["data"]["jobId"])
+        job_id = expect(envelope, "jobId", "import job")
         job = poll_job(self._transport, self._workspace_id, job_id, label=f"import {self.name}", timeout=timeout)
         dataset_id = job.get("domainEntityId") or job.get("datasetId")
         listing = self._transport.request("GET", f"/api/v1/workspaces/{self._workspace_id}/sources")
@@ -400,9 +405,14 @@ class Workspace:
 
         Returns:
             The new [`Source`](#source).
+
+        Raises:
+            InvalidArgumentError: `frame` is not a usable, non-empty DataFrame,
+                or `name` is blank.
         """
-        buffer = io.BytesIO()
-        frame.to_parquet(buffer, index=False)
+        content = _guard.to_parquet(_guard.frame(frame))
+        if not str(name).strip():
+            raise InvalidArgumentError("name= is blank; a source needs a name to be findable again")
 
         created = self._transport.request(
             "POST", f"/api/v1/workspaces/{self.id}/sources", json_body={"name": name}
@@ -413,7 +423,7 @@ class Workspace:
         self._transport.request(
             "POST",
             f"/api/v1/workspaces/{self.id}/sources/{source.id}/upload",
-            content=buffer.getvalue(),
+            content=content,
             headers={"Content-Type": "application/octet-stream", "x-filename": f"{name}.parquet"},
         )
 
@@ -456,10 +466,16 @@ class Workspace:
             The new [`Twin`](#twin), untrained.
 
         Raises:
-            RootCauseError: Both `dataset_id` and `source_id` were given.
+            InvalidArgumentError: Both, or neither, of `dataset_id` and
+                `source_id` were given, or `kind` is not a known twin kind.
         """
+        from rootcause.direct import KIND_RULES
+
         if dataset_id and source_id:
-            raise RootCauseError("Pass either dataset_id or source_id, not both")
+            raise InvalidArgumentError("Pass either dataset_id or source_id, not both")
+        if not dataset_id and not source_id:
+            raise InvalidArgumentError("A twin needs data: pass dataset_id= or source_id=")
+        _guard.choice(kind, "kind", KIND_RULES)
         body: dict[str, Any] = {"name": name, "type": kind}
         if dataset_id:
             body["datasetId"] = dataset_id

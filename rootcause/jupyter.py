@@ -19,6 +19,7 @@ Requires the jupyter extra: pip install "rootcause-sdk[jupyter]".
 import json
 from typing import Any
 
+from rootcause import _guard
 from rootcause._http import Transport
 from rootcause.errors import RootCauseError
 
@@ -116,6 +117,14 @@ export function render({ model, el }) {
 """
 
 
+def _error_text(result: dict[str, Any]) -> str:
+    """The human half of an MCP error result, without the envelope around it."""
+    for block in result.get("content") or []:
+        if isinstance(block, dict) and block.get("text"):
+            return str(block["text"])[:400]
+    return str(result.get("structuredContent") or result)[:400]
+
+
 class McpGateway:
     """Stateless JSON-RPC over HTTP against the platform's MCP endpoint."""
 
@@ -162,13 +171,8 @@ class McpGateway:
 
 
 def _widget_class():
-    try:
-        import anywidget
-        import traitlets
-    except ImportError as e:
-        raise RootCauseError(
-            'Interactive apps need the jupyter extra: pip install "rootcause-sdk[jupyter]"'
-        ) from e
+    anywidget = _guard.require("anywidget")
+    traitlets = _guard.require("traitlets")
 
     class RootCauseApp(anywidget.AnyWidget):
         _esm = _HOST_ESM
@@ -238,6 +242,8 @@ def app(
 
     if result is None:
         result = gateway.call_tool(tool, arguments or {})
+    if isinstance(result, dict) and result.get("isError"):
+        raise RootCauseError(f"{tool} failed: {_error_text(result)}")
     bundle = gateway.read_bundle(gateway.app_uri_for(tool))
 
     widget_cls = _widget_class()

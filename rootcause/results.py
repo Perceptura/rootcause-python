@@ -1,6 +1,6 @@
 """Return types for the twin's verbs; each one flattens to a DataFrame."""
 
-from rootcause.errors import RootCauseError
+from rootcause.errors import InvalidArgumentError, RootCauseError
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -121,13 +121,13 @@ class SimulationResult:
             The chosen records as a DataFrame.
 
         Raises:
-            ValueError: No tabular records in the payload, or no records at
-                `path`.
+            InvalidArgumentError: No tabular records in the payload, or no
+                records at `path`.
         """
         pd = _pandas()
         candidates = _walk_records(self.results)
         if not candidates:
-            raise ValueError(
+            raise InvalidArgumentError(
                 "No tabular records found in this result; inspect .results for the raw payload"
             )
         if path is not None:
@@ -135,7 +135,7 @@ class SimulationResult:
             for candidate_path, records in candidates:
                 if candidate_path == wanted:
                     return pd.DataFrame(records)
-            raise ValueError(
+            raise InvalidArgumentError(
                 f'No records at "{path}". Available: {", ".join(".".join(p) for p, _ in candidates)}'
             )
         if len(candidates) == 1:
@@ -184,6 +184,11 @@ class SimulationResult:
             metrics = payload.get("metrics") or []
             if len(metrics) == 1:
                 return self.sweep(metrics[0])
+            if not metrics:
+                raise RootCauseError(
+                    "This run has no sweep curve. Sweeps come from a range intervention: "
+                    "twin.intervene({'price': rc.range(15, 30)}, outcomes=[...])."
+                )
             raise RootCauseError(
                 f"This sweep carries {len(metrics)} metrics; pass metric= one of: {', '.join(metrics)}"
             )
@@ -239,6 +244,8 @@ class SweepResult:
         return self._frame
 
     def __getattr__(self, name: str) -> Any:
+        if name.startswith("_"):
+            raise AttributeError(name)
         return getattr(self._frame, name)
 
     def __getitem__(self, key: Any) -> Any:

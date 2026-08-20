@@ -2,8 +2,9 @@ import hashlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from rootcause._http import Transport, poll_job
-from rootcause.errors import KindMismatchError, RootCauseError
+from rootcause import _guard
+from rootcause._http import Transport, expect, poll_job
+from rootcause.errors import InvalidArgumentError, KindMismatchError, RootCauseError
 from rootcause.graph import Graph
 from rootcause.twin import Twin
 from rootcause.workspace import Workspace
@@ -13,7 +14,7 @@ if TYPE_CHECKING:
 
 SCRATCH_WORKSPACE_NAME = ".sdk-scratch"
 
-_KIND_RULES: dict[str, tuple[bool, bool]] = {
+KIND_RULES: dict[str, tuple[bool, bool]] = {
     "static": (False, False),
     "temporal": (True, False),
     "multi-environment-static": (False, True),
@@ -31,15 +32,28 @@ def infer_kind(time: str | None, entity: str | None, kind: str | None) -> str:
     }[(time is not None, entity is not None)]
     if kind is None:
         return inferred
-    if kind not in _KIND_RULES:
-        raise KindMismatchError(f'Unknown kind "{kind}". One of: {", ".join(_KIND_RULES)}')
-    needs_time, needs_entity = _KIND_RULES[kind]
+    if kind not in KIND_RULES:
+        raise KindMismatchError(f'Unknown kind "{kind}". One of: {", ".join(KIND_RULES)}')
+    needs_time, needs_entity = KIND_RULES[kind]
     if needs_time != (time is not None) or needs_entity != (entity is not None):
         raise KindMismatchError(
             f'kind="{kind}" contradicts the kwargs (time={"set" if time else "unset"}, '
             f'entity={"set" if entity else "unset"}); with these kwargs the kind would be "{inferred}"'
         )
     return kind
+
+
+def _require_columns(frame: "pd.DataFrame", **named: str | None) -> None:
+    """Column arguments are checked against the frame, not discovered server-side."""
+    columns = [str(column) for column in frame.columns]
+    for argument, column in named.items():
+        if column is None or column in columns:
+            continue
+        import difflib
+
+        close = difflib.get_close_matches(str(column), columns, n=3)
+        suffix = f" Did you mean: {', '.join(close)}?" if close else f" Columns: {', '.join(columns[:12])}"
+        raise InvalidArgumentError(f'{argument}="{column}" is not a column in the frame.{suffix}')
 
 
 def frame_fingerprint(frame: "pd.DataFrame") -> str:
@@ -126,7 +140,9 @@ def discover(
     """
     import sys as _sys
 
+    _guard.frame(frame)
     resolved_kind = infer_kind(time, entity, kind)
+    _require_columns(frame, target=target, time=time, entity=entity)
     workspace = scratch_workspace(transport)
     fingerprint = frame_fingerprint(frame)
 
@@ -156,9 +172,22 @@ def discover(
     return graph
 
 
+def _read_export(path: str | Path) -> bytes:
+    """Read a .rctwin export, or explain what is wrong with the path."""
+    target = Path(path).expanduser()
+    if not target.exists():
+        raise InvalidArgumentError(f"No file at {target}; twin.save() writes the .rctwin this loads")
+    if target.is_dir():
+        raise InvalidArgumentError(f"{target} is a directory; pass the .rctwin file itself")
+    blob = target.read_bytes()
+    if not blob.startswith(b"PK"):
+        raise InvalidArgumentError(f"{target} is not a .rctwin archive (it is not a zip)")
+    return blob
+
+
 def load_twin(path: str | Path, *, transport: Transport, timeout: float = 3600.0) -> Twin:
     """Import a .rctwin export zip into the scratch workspace and return the runnable twin."""
-    blob = Path(path).read_bytes()
+    blob = _read_export(path)
     workspace = scratch_workspace(transport)
     before = {twin.id for twin in workspace.twins}
     envelope = transport.request(
@@ -167,7 +196,7 @@ def load_twin(path: str | Path, *, transport: Transport, timeout: float = 3600.0
         content=blob,
         headers={"Content-Type": "application/zip", "x-filename": Path(path).name if str(path).endswith(".zip") else "import.zip"},
     )
-    job_id = str(envelope["data"]["jobId"])
+    job_id = expect(envelope, "jobId", "twin import job")
     poll_job(transport, workspace.id, job_id, label="import twin", timeout=timeout)
     after = list(workspace.twins)
     fresh = [twin for twin in after if twin.id not in before]

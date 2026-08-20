@@ -16,6 +16,10 @@ Two modes, one object model:
 Conventions throughout: every long-running call blocks with a progress line and
 raises `JobFailedError` on failure; everything tabular answers `to_frame()`;
 names resolve case-insensitively, with close-match suggestions on a miss.
+
+Every failure is a `RootCauseError` carrying one readable sentence and the thing
+to try next — arguments are checked before a request goes out, and no call
+raises an httpx, pyarrow or KeyError traceback of its own.
 """
 
 from typing import TYPE_CHECKING, Any
@@ -25,9 +29,13 @@ from rootcause._display import auto_apps
 from rootcause._http import Transport, resolve_transport
 from rootcause.errors import (
     AuthenticationError,
+    ConnectionFailedError,
+    InvalidArgumentError,
     JobFailedError,
     JobTimeoutError,
     KindMismatchError,
+    MalformedResponseError,
+    MissingDependencyError,
     NotFoundInWorkspaceError,
     RootCauseApiError,
     RootCauseError,
@@ -67,23 +75,35 @@ def login(api_key: str | None = None, base_url: str | None = None) -> None:
     4. an interactive browser login (PKCE; on a remote kernel it prints a URL
        to paste a code back from).
 
+    A session with no terminal and no notebook kernel — a CI job, a scheduled
+    script — never opens a browser: with no key and no cached token it raises
+    rather than blocking on a login nobody can complete.
+
     Args:
         api_key: An API key (`pk_...`). When omitted, resolution falls through
             `ROOTCAUSE_API_KEY`, the cached OAuth token in `~/.rootcause/`, then
             an interactive browser login with PKCE.
         base_url: Deployment URL, for example `https://sandbox.rootcause.ai`.
             Falls back to `ROOTCAUSE_BASE_URL`, then the production default.
+
+    Raises:
+        AuthenticationError: No credentials, and no way to run a browser login
+            here.
+        InvalidArgumentError: `base_url` is not an http(s) URL.
     """
-    if _session["transport"] is not None:
-        _session["transport"].close()
-    _session["transport"] = resolve_transport(api_key=api_key, base_url=base_url)
+    transport = resolve_transport(api_key=api_key, base_url=base_url)
+    previous = _session["transport"]
+    _session["transport"] = transport
+    if previous is not None:
+        previous.close()
 
 
 def _transport() -> Transport:
     if _session["transport"] is None:
         login()
     transport = _session["transport"]
-    assert transport is not None
+    if transport is None:
+        raise AuthenticationError("No authenticated session; call rc.login() first")
     return transport
 
 
@@ -184,6 +204,8 @@ def discover(
         The discovered [`Graph`](#graph).
 
     Raises:
+        InvalidArgumentError: `frame` is not a usable, non-empty DataFrame, or
+            `target`, `time` or `entity` names a column it does not have.
         KindMismatchError: An explicit `kind` contradicts `time` and `entity`.
         JobFailedError: Discovery ended in a terminal non-success state.
     """
@@ -228,13 +250,17 @@ def render_widget(widget: dict[str, Any], theme: str = "light") -> str:
 
 __all__ = [
     "AuthenticationError",
+    "ConnectionFailedError",
     "Connector",
     "DataView",
     "ForecastResult",
     "Graph",
+    "InvalidArgumentError",
     "JobFailedError",
     "JobTimeoutError",
     "KindMismatchError",
+    "MalformedResponseError",
+    "MissingDependencyError",
     "NotFoundInWorkspaceError",
     "Ontology",
     "OntologyQueryResult",

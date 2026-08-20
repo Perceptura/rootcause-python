@@ -1,11 +1,15 @@
 import base64
 import hashlib
 import json
+import math
 import os
 import secrets
+import socket
 import sys
 import time
 import webbrowser
+from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlencode
@@ -14,16 +18,109 @@ import httpx
 
 from rootcause.errors import (
     AuthenticationError,
+    ConnectionFailedError,
+    InvalidArgumentError,
     JobFailedError,
     JobTimeoutError,
+    MalformedResponseError,
     RootCauseApiError,
 )
 
 DEFAULT_BASE_URL = "https://platform.rootcause.ai"
 CREDENTIALS_PATH = Path.home() / ".rootcause" / "credentials.json"
 RETRYABLE_STATUSES = {429, 502, 503, 504}
-JOB_TERMINAL = {"completed", "failed", "cancelled"}
-RUN_TERMINAL = {"completed", "failed", "cancelled"}
+TERMINAL_STATES = {"completed", "failed", "cancelled"}
+# A freshly dispatched job answers 404 for a beat while its document
+# materialises; treat that as pending for this long before believing it.
+DISPATCH_GRACE = 30.0
+
+
+def normalise_base_url(base_url: str) -> str:
+    """Reject a base_url httpx would only complain about mid-request."""
+    url = str(base_url).strip().rstrip("/")
+    if not url:
+        raise InvalidArgumentError("base_url is empty; pass a deployment URL like https://platform.rootcause.ai")
+    if "://" not in url:
+        raise InvalidArgumentError(f'base_url "{url}" needs a scheme: https://{url}')
+    if not url.startswith(("http://", "https://")):
+        raise InvalidArgumentError(f'base_url "{url}" must be an http:// or https:// URL')
+    return url
+
+
+def _is_dns_failure(error: BaseException | None) -> bool:
+    """Walk the cause chain: httpx wraps httpcore, which wraps the resolver's error."""
+    seen = 0
+    while error is not None and seen < 8:
+        if isinstance(error, socket.gaierror):
+            return True
+        error = error.__cause__ or error.__context__
+        seen += 1
+    return False
+
+
+def _is_permanent(error: Exception) -> bool:
+    """Whether retrying could ever help: a bad scheme or an unresolvable host cannot."""
+    return isinstance(error, httpx.UnsupportedProtocol) or _is_dns_failure(error)
+
+
+def _connection_failed(error: Exception, base_url: str) -> ConnectionFailedError:
+    """Turn httpx's transport exceptions into one sentence and a thing to try."""
+    if _is_dns_failure(error):
+        return ConnectionFailedError(
+            f"Could not reach {base_url}: that hostname does not resolve. Check base_url for a typo, "
+            "and that you are on the network the deployment lives on."
+        )
+    hints = {
+        httpx.ConnectTimeout: "The platform did not answer in time — check the URL and any VPN or proxy.",
+        httpx.ReadTimeout: "The platform accepted the request but answered too slowly; raise timeout= on the call.",
+        httpx.WriteTimeout: "The upload stalled; retry, or upload in smaller batches.",
+        httpx.PoolTimeout: "Too many concurrent requests on this session.",
+        httpx.ConnectError: "Nothing is listening there — check base_url, your network, and any VPN.",
+        httpx.UnsupportedProtocol: "That base_url is not an http:// or https:// URL.",
+    }
+    hint = next((text for kind, text in hints.items() if isinstance(error, kind)), "The connection failed mid-request.")
+    return ConnectionFailedError(f"Could not reach {base_url}: {hint} ({error.__class__.__name__}: {error})")
+
+
+def _is_missing(value: Any) -> bool:
+    """NaN, NaT and their kin: the values that are not equal to themselves."""
+    try:
+        return bool(value != value)  # noqa: PLR0124
+    except (TypeError, ValueError):
+        return False
+
+
+def jsonable(value: Any) -> Any:
+    """Make a payload JSON-encodable: numpy scalars, timestamps, sets, NaN.
+
+    Values lifted straight out of a DataFrame are the normal case — a numpy
+    int or a NaT would otherwise fail deep inside the encoder.
+    """
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {str(key): jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [jsonable(item) for item in value]
+    if isinstance(value, Decimal):
+        return jsonable(float(value))
+    if hasattr(value, "tolist") and hasattr(value, "dtype"):
+        return jsonable(value.tolist())
+    # NaT is a datetime subclass, so this has to come before the isoformat below.
+    if _is_missing(value):
+        return None
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if hasattr(value, "item") and hasattr(value, "dtype"):
+        try:
+            return jsonable(value.item())
+        except (ValueError, AttributeError):
+            return str(value)
+    if hasattr(value, "isoformat"):
+        return str(value.isoformat())
+    return value
 
 
 def _read_credentials() -> dict[str, Any]:
@@ -191,7 +288,7 @@ class Transport:
         timeout: float = 120.0,
         httpx_transport: httpx.BaseTransport | None = None,
     ) -> None:
-        self.base_url = base_url.rstrip("/")
+        self.base_url = normalise_base_url(base_url)
         self._token = token
         self._oauth_entry = oauth_entry
         self._client = httpx.Client(base_url=self.base_url, timeout=timeout, transport=httpx_transport)
@@ -213,7 +310,14 @@ class Transport:
         response = self._raw(method, path, json_body=json_body, content=content, headers=headers, params=params, max_attempts=max_attempts)
         if response.status_code == 204 or not response.content:
             return {}
-        return response.json()
+        try:
+            return response.json()
+        except ValueError as error:
+            raise MalformedResponseError(
+                f"{method} {path} answered {response.status_code} with "
+                f"{response.headers.get('content-type', 'an unknown content type')} instead of JSON. "
+                "Check that base_url points at the platform API and not at a proxy or login page."
+            ) from error
 
     def request_bytes(self, method: str, path: str, *, params: dict[str, Any] | None = None) -> bytes:
         return self._raw(method, path, params=params).content
@@ -229,19 +333,22 @@ class Transport:
         params: dict[str, Any] | None = None,
         max_attempts: int = 4,
     ) -> httpx.Response:
+        if json_body is not None:
+            content = json.dumps(jsonable(json_body)).encode()
+            headers = {"Content-Type": "application/json", **(headers or {})}
         attempt = 0
         while True:
             attempt += 1
             all_headers = {"Authorization": f"Bearer {self._access_token()}", **(headers or {})}
             try:
                 response = self._client.request(
-                    method, path, json=json_body, content=content, headers=all_headers, params=params
+                    method, path, content=content, headers=all_headers, params=params
                 )
-            except httpx.TransportError:
-                if method == "GET" and attempt < max_attempts:
+            except httpx.TransportError as error:
+                if method == "GET" and attempt < max_attempts and not _is_permanent(error):
                     time.sleep(min(2.0 ** attempt, 20.0))
                     continue
-                raise
+                raise _connection_failed(error, self.base_url) from error
             if response.status_code in RETRYABLE_STATUSES and attempt < max_attempts:
                 retry_after = response.headers.get("Retry-After")
                 delay = float(retry_after) if retry_after and retry_after.isdigit() else min(2.0 ** attempt, 20.0)
@@ -270,18 +377,41 @@ class Transport:
         return str(entry["access_token"])
 
 
+def _is_interactive() -> bool:
+    """Whether a browser login could plausibly be completed by a human here."""
+    if os.environ.get("ROOTCAUSE_FORCE_BROWSER_LOGIN"):
+        return True
+    if "ipykernel" in sys.modules:
+        return True
+    if os.environ.get("CI"):
+        return False
+    return bool(getattr(sys.stdin, "isatty", bool)())
+
+
 def resolve_transport(api_key: str | None = None, base_url: str | None = None) -> Transport:
     """Credential resolution: explicit key → env → cached OAuth token → interactive PKCE."""
-    resolved_base = (base_url or os.environ.get("ROOTCAUSE_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
+    resolved_base = normalise_base_url(base_url or os.environ.get("ROOTCAUSE_BASE_URL") or DEFAULT_BASE_URL)
 
     key = api_key or os.environ.get("ROOTCAUSE_API_KEY")
-    if key:
-        return Transport(resolved_base, key)
+    if key is not None:
+        if not str(key).strip():
+            raise AuthenticationError(
+                "The API key is empty. Pass rc.login(api_key='pk_…'), or unset ROOTCAUSE_API_KEY "
+                "to fall back to a browser login."
+            )
+        return Transport(resolved_base, str(key).strip())
 
     store = _read_credentials()
     entry = store.get(resolved_base)
     if isinstance(entry, dict) and entry.get("access_token"):
         return Transport(resolved_base, "", oauth_entry=entry)
+
+    if not _is_interactive():
+        raise AuthenticationError(
+            f"No credentials for {resolved_base} and no way to run a browser login here. "
+            "Set ROOTCAUSE_API_KEY (or pass rc.login(api_key='pk_…')); a key made in the "
+            "platform's settings is what non-interactive runs use."
+        )
 
     session = _OAuthSession(resolved_base)
     entry = session.login()
@@ -307,6 +437,65 @@ class _Progress:
             print(file=sys.stderr)
 
 
+def expect(envelope: Any, key: str, what: str) -> str:
+    """Pull an id out of a write response, or say what came back instead of one."""
+    data = envelope.get("data", envelope) if isinstance(envelope, dict) else envelope
+    value = data.get(key) if isinstance(data, dict) else None
+    if not value:
+        raise MalformedResponseError(
+            f"The platform accepted the {what} but returned no {key}; it may not have been started. "
+            f"Response: {str(envelope)[:200]}"
+        )
+    return str(value)
+
+
+def _poll(
+    transport: Transport,
+    path: str,
+    identifier: str,
+    noun: str,
+    *,
+    label: str,
+    interval: float,
+    timeout: float,
+) -> dict[str, Any]:
+    """Block until a job or run reaches a terminal state, drawing a progress line."""
+    progress = _Progress(label)
+    deadline = time.monotonic() + timeout
+    grace_deadline = time.monotonic() + DISPATCH_GRACE
+    try:
+        while True:
+            try:
+                doc = transport.request("GET", path).get("data", {})
+            except RootCauseApiError as error:
+                if error.status == 404 and time.monotonic() < grace_deadline:
+                    progress.update("registering")
+                    time.sleep(interval)
+                    continue
+                raise
+            status = str(doc.get("status", "unknown"))
+            progress.update(status, doc.get("progress"))
+            if status in TERMINAL_STATES:
+                progress.done()
+                if status != "completed":
+                    raise JobFailedError(identifier, status, doc.get("error") or doc.get("message") or None)
+                return doc
+            if time.monotonic() > deadline:
+                progress.done()
+                raise JobTimeoutError(
+                    f"{noun} {identifier} was still '{status}' after {timeout:.0f}s. It keeps running on the "
+                    f"platform; pass a larger timeout= to wait longer."
+                )
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        progress.done()
+        print(
+            f"Stopped waiting. {noun} {identifier} keeps running on the platform.",
+            file=sys.stderr,
+        )
+        raise
+
+
 def poll_job(
     transport: Transport,
     workspace_id: str,
@@ -316,32 +505,16 @@ def poll_job(
     interval: float = 3.0,
     timeout: float = 3600.0,
 ) -> dict[str, Any]:
-    """Block until a pipeline job reaches a terminal state, drawing a progress line."""
-    progress = _Progress(label)
-    deadline = time.monotonic() + timeout
-    # A freshly dispatched job can answer 404 for a beat while the run document
-    # materialises; treat that as pending for a short grace window.
-    grace_deadline = time.monotonic() + 30.0
-    while True:
-        try:
-            doc = transport.request("GET", f"/api/v1/workspaces/{workspace_id}/jobs/{job_id}").get("data", {})
-        except RootCauseApiError as error:
-            if error.status == 404 and time.monotonic() < grace_deadline:
-                progress.update("registering")
-                time.sleep(interval)
-                continue
-            raise
-        status = str(doc.get("status", "unknown"))
-        progress.update(status, doc.get("progress"))
-        if status in JOB_TERMINAL:
-            progress.done()
-            if status != "completed":
-                raise JobFailedError(job_id, status, doc.get("error") or doc.get("message") or None)
-            return doc
-        if time.monotonic() > deadline:
-            progress.done()
-            raise JobTimeoutError(f"Job {job_id} still '{status}' after {timeout:.0f}s")
-        time.sleep(interval)
+    """Block until a pipeline job reaches a terminal state."""
+    return _poll(
+        transport,
+        f"/api/v1/workspaces/{workspace_id}/jobs/{job_id}",
+        job_id,
+        "Job",
+        label=label,
+        interval=interval,
+        timeout=timeout,
+    )
 
 
 def poll_run(
@@ -354,18 +527,12 @@ def poll_run(
     timeout: float = 3600.0,
 ) -> dict[str, Any]:
     """Block until a simulation run reaches a terminal state."""
-    progress = _Progress(label)
-    deadline = time.monotonic() + timeout
-    while True:
-        doc = transport.request("GET", f"/api/v1/workspaces/{workspace_id}/simulations/{run_id}").get("data", {})
-        status = str(doc.get("status", "unknown"))
-        progress.update(status, doc.get("progress"))
-        if status in RUN_TERMINAL:
-            progress.done()
-            if status != "completed":
-                raise JobFailedError(run_id, status, doc.get("error") or None)
-            return doc
-        if time.monotonic() > deadline:
-            progress.done()
-            raise JobTimeoutError(f"Run {run_id} still '{status}' after {timeout:.0f}s")
-        time.sleep(interval)
+    return _poll(
+        transport,
+        f"/api/v1/workspaces/{workspace_id}/simulations/{run_id}",
+        run_id,
+        "Run",
+        label=label,
+        interval=interval,
+        timeout=timeout,
+    )

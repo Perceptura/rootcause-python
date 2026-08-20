@@ -11,11 +11,30 @@ class AuthenticationError(RootCauseError):
     """No usable credentials, or the platform rejected the ones provided."""
 
 
+class ConnectionFailedError(RootCauseError):
+    """The platform could not be reached: DNS, TLS, refused connection, or a timeout."""
+
+
+class MalformedResponseError(RootCauseError):
+    """The platform answered, but not with the shape this SDK needs."""
+
+
+class MissingDependencyError(RootCauseError, ImportError):
+    """An optional extra this call needs is not installed; the message names it."""
+
+
+class InvalidArgumentError(RootCauseError, ValueError):
+    """An argument could not be used as passed, caught before any request went out."""
+
+
 _STATUS_HINTS = {
     401: "Check the API key (ROOTCAUSE_API_KEY) or run rc.login() again.",
     403: "The credential lacks a scope for this operation — rc.whoami() shows what it carries.",
+    404: "The object may have been deleted, or it lives in another workspace.",
     409: "The resource changed underneath this call — re-read it and retry.",
+    413: "The payload is too large for one request — upload in batches with source.extend().",
     429: "Rate limited. The SDK retries these automatically; sustained 429s mean the key's per-minute limit is too low for this workload.",
+    500: "A platform-side fault. Retrying rarely helps; quote the traceId to support.",
 }
 
 _MAX_DETAIL = 600
@@ -26,16 +45,16 @@ def _looks_like_html(text: str) -> bool:
     return head.startswith("<!doctype") or head.startswith("<html")
 
 
-def _condense_detail(detail: str, status: int) -> str:
-    """Make server explanations readable: no HTML pages, no embedded stack traces."""
+def _condense_detail(detail: str, status: int) -> "tuple[str, bool]":
+    """Readable server explanations — no HTML pages, no stacks — and whether the status hint still applies."""
     if _looks_like_html(detail):
         if status == 404:
             return (
                 "The server answered with a web page, not an API response — this endpoint "
                 "does not exist on that deployment. The platform is likely older than this "
                 "SDK; check the base_url or update the platform."
-            )
-        return f"The server answered with a web page, not an API response (HTTP {status})."
+            ), False
+        return f"The server answered with a web page, not an API response (HTTP {status}).", False
     # A proxied upstream problem sometimes arrives embedded as JSON text, stack
     # trace and all; keep its human fields and the traceId, drop the trace.
     brace = detail.find("{")
@@ -52,10 +71,10 @@ def _condense_detail(detail: str, status: int) -> str:
                 parts.append(f'resource: {upstream["resource"]}')
             if upstream.get("traceId"):
                 parts.append(f'traceId: {upstream["traceId"]}')
-            return f"{detail[:brace].strip()} {' — '.join(parts)}".strip()
+            return f"{detail[:brace].strip()} {' — '.join(parts)}".strip(), True
     if len(detail) > _MAX_DETAIL:
-        return detail[:_MAX_DETAIL] + " … [truncated]"
-    return detail
+        return detail[:_MAX_DETAIL] + " … [truncated]", True
+    return detail, True
 
 
 class RootCauseApiError(RootCauseError):
@@ -68,12 +87,12 @@ class RootCauseApiError(RootCauseError):
         body (Any): The raw problem body, when it was JSON.
     """
 
-    def __init__(self, status: int, title: str, detail: str, body: Any = None) -> None:
+    def __init__(self, status: int, title: str, detail: str, body: Any = None, status_hint: bool = True) -> None:
         self.status = status
         self.title = title
         self.detail = detail
         self.body = body
-        hint = _STATUS_HINTS.get(status)
+        hint = _STATUS_HINTS.get(status) if status_hint else None
         message = f"[{status} {title}] {detail}"
         if hint:
             message = f"{message}\n{hint}"
@@ -84,8 +103,10 @@ class RootCauseApiError(RootCauseError):
         if isinstance(body, dict):
             title = str(body.get("title") or body.get("error") or "Error")
             detail = str(body.get("detail") or body.get("error") or body)
-            return cls(status, title, _condense_detail(detail, status), body)
-        return cls(status, "Error", _condense_detail(str(body), status), body)
+        else:
+            title, detail = "Error", str(body)
+        condensed, keep_hint = _condense_detail(detail, status)
+        return cls(status, title, condensed, body, status_hint=keep_hint)
 
 
 def _format_job_error(error: "str | dict | None") -> str:

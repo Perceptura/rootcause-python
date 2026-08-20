@@ -4,7 +4,12 @@ import difflib
 from typing import TYPE_CHECKING, Any
 
 from rootcause._http import Transport
-from rootcause.errors import NotFoundInWorkspaceError, RootCauseApiError, RootCauseError
+from rootcause.errors import (
+    InvalidArgumentError,
+    NotFoundInWorkspaceError,
+    RootCauseApiError,
+    RootCauseError,
+)
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -446,6 +451,13 @@ class Ontology:
         Returns:
             An [`OntologyQueryResult`](#ontologyqueryresult).
         """
+        if not select and not aggregate:
+            raise InvalidArgumentError("Pass select=[...] concepts to return, or aggregate={...}")
+        for clause in where or []:
+            if not isinstance(clause, (tuple, list)) or len(clause) != 3:
+                raise InvalidArgumentError(
+                    f"where= items are (concept, operator, value) triples, not {clause!r}"
+                )
         query: dict[str, Any] = {
             "conceptIds": [self._concept_id(name) for name in (select or [])],
             "filters": [
@@ -480,6 +492,8 @@ class Ontology:
             An [`OntologyQueryResult`](#ontologyqueryresult); `result.query` is
             the structured query the translator produced.
         """
+        if not str(prompt).strip():
+            raise InvalidArgumentError("prompt= is empty; ask the question you want answered")
         body = {"prompt": prompt, "limit": page_size}
         payload = self._post_query(body)
         result = OntologyQueryResult(self, payload, {"query": payload.get("query"), "limit": page_size})
@@ -492,7 +506,9 @@ class Ontology:
     def _operator(self, operator: str) -> str:
         resolved = _ONTOLOGY_OPERATORS.get(str(operator).strip().lower())
         if resolved is None:
-            raise ValueError(f'Unknown operator "{operator}". Use one of {sorted(set(_ONTOLOGY_OPERATORS.values()))}')
+            raise InvalidArgumentError(
+                f'Unknown operator "{operator}". Use one of {sorted(set(_ONTOLOGY_OPERATORS.values()))}'
+            )
         return resolved
 
     def _order(self, order_by: str | list[str] | None) -> list[dict[str, str]]:

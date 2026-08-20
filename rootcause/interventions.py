@@ -5,7 +5,19 @@ Every builder returns a plain dict, so a hand-written payload works just as well
 
 from typing import Any
 
+from rootcause.errors import InvalidArgumentError
+
 _OPERATOR_SYMBOLS = {"==", "!=", "<>", ">", "<", ">=", "<=", "in", "not_in", "eq", "ne", "gt", "lt", "ge", "le"}
+
+
+def _number(value: Any, argument: str) -> float:
+    """Anything the engine will treat as a number, or a sentence about what was passed."""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise InvalidArgumentError(f"{argument} takes a number, not {type(value).__name__}")
+    try:
+        return float(value)
+    except ValueError:
+        raise InvalidArgumentError(f"{argument} takes a number, not {value!r}") from None
 
 
 def set(value: float | int | str | bool) -> dict[str, Any]:  # noqa: A001
@@ -25,7 +37,7 @@ def pct(value: float) -> dict[str, Any]:
     Args:
         value: The change, in percent.
     """
-    return {"type": "relative_change", "mode": "percentage", "value": value}
+    return {"type": "relative_change", "mode": "percentage", "value": _number(value, "rc.pct")}
 
 
 def add(value: float) -> dict[str, Any]:
@@ -34,7 +46,7 @@ def add(value: float) -> dict[str, Any]:
     Args:
         value: The change, in the variable's own units.
     """
-    return {"type": "relative_change", "mode": "absolute", "value": value}
+    return {"type": "relative_change", "mode": "absolute", "value": _number(value, "rc.add")}
 
 
 def prob(category: str | int | bool | dict[Any, float], probability: float | None = None) -> dict[str, Any]:
@@ -45,16 +57,19 @@ def prob(category: str | int | bool | dict[Any, float], probability: float | Non
         probability: The probability, when `category` is not a dict.
 
     Raises:
-        ValueError: The dict form carried more than one pair, or no probability
-            was given.
+        InvalidArgumentError: The dict form carried more than one pair, no
+            probability was given, or it is not a probability.
     """
     if isinstance(category, dict):
         if len(category) != 1:
-            raise ValueError("rc.prob({...}) takes exactly one category: probability pair")
+            raise InvalidArgumentError("rc.prob({...}) takes exactly one category: probability pair")
         ((category, probability),) = category.items()
     if probability is None:
-        raise ValueError("rc.prob needs a probability")
-    return {"type": "set_probability", "category": category, "probability": float(probability)}
+        raise InvalidArgumentError('rc.prob needs a probability: rc.prob("yes", 0.8)')
+    value = _number(probability, "probability")
+    if not 0.0 <= value <= 1.0:
+        raise InvalidArgumentError(f"probability must be between 0 and 1, not {value}")
+    return {"type": "set_probability", "category": category, "probability": value}
 
 
 def adjust_prob(category: str | int | bool, delta: float) -> dict[str, Any]:
@@ -64,7 +79,7 @@ def adjust_prob(category: str | int | bool, delta: float) -> dict[str, Any]:
         category: The category to shift.
         delta: The shift, in percentage points.
     """
-    return {"type": "adjust_probability", "category": category, "delta": float(delta)}
+    return {"type": "adjust_probability", "category": category, "delta": _number(delta, "delta")}
 
 
 def members(
@@ -127,10 +142,14 @@ def range(from_: float | None = None, to: float | None = None, *, steps: int | N
     """
     spec: dict[str, Any] = {"type": "range"}
     if from_ is not None:
-        spec["from"] = float(from_)
+        spec["from"] = _number(from_, "from_")
     if to is not None:
-        spec["to"] = float(to)
+        spec["to"] = _number(to, "to")
+    if "from" in spec and "to" in spec and spec["from"] >= spec["to"]:
+        raise InvalidArgumentError(f'rc.range needs from_ < to, not {spec["from"]} → {spec["to"]}')
     if steps is not None:
+        if int(steps) < 2:
+            raise InvalidArgumentError(f"rc.range needs at least 2 steps to be a curve, not {steps}")
         spec["steps"] = int(steps)
     return spec
 
@@ -148,6 +167,13 @@ def metric(name: str, sql: str, unit: str = "count", higher_is_better: bool = Tr
     Examples:
         >>> rc.metric("avg_revenue", "SELECT AVG(revenue) AS value FROM df", unit="USD")
     """
+    if not str(name).strip():
+        raise InvalidArgumentError("A metric needs a name")
+    if "select" not in str(sql).lower():
+        raise InvalidArgumentError(
+            f'metric sql must be a SELECT over the sampled frame, for example '
+            f'\'SELECT AVG("{name}") AS value FROM df\'; got: {sql!r}'
+        )
     return {"name": name, "sqlQuery": sql, "unit": unit, "higherIsBetter": higher_is_better}
 
 
@@ -178,13 +204,15 @@ def compile_where(where: Any) -> list[dict[str, Any]]:
     if isinstance(where, list):
         return list(where)
     if not isinstance(where, dict):
-        raise TypeError("where= must be a dict, a list of condition dicts, or None")
+        raise InvalidArgumentError(
+            f"where= must be a dict, a list of condition dicts, or None, not {type(where).__name__}"
+        )
 
     conditions: list[dict[str, Any]] = []
     for variable, clause in where.items():
         if isinstance(clause, tuple):
             if len(clause) != 2 or str(clause[0]) not in _OPERATOR_SYMBOLS:
-                raise ValueError(
+                raise InvalidArgumentError(
                     f'where clause for "{variable}" must be (operator, value) with operator one of {sorted(_OPERATOR_SYMBOLS)}'
                 )
             operator, value = clause
@@ -201,7 +229,9 @@ def compile_do(do: dict[str, Any], where: Any = None) -> list[dict[str, Any]]:
     to every intervention, scoping the whole do() to that subpopulation.
     """
     if not isinstance(do, dict) or not do:
-        raise ValueError("do= must be a non-empty dict of {variable: value or rc.set/pct/add/prob/members spec}")
+        raise InvalidArgumentError(
+            "do= must be a non-empty dict of {variable: value or rc.set/pct/add/prob/members spec}"
+        )
     conditions = compile_where(where)
     interventions: list[dict[str, Any]] = []
     for variable, spec in do.items():

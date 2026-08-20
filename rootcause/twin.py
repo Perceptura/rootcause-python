@@ -3,8 +3,9 @@
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from rootcause._http import Transport, poll_job, poll_run
-from rootcause.errors import RootCauseError
+from rootcause import _guard
+from rootcause._http import Transport, expect, poll_job, poll_run
+from rootcause.errors import InvalidArgumentError, RootCauseError
 from rootcause.graph import Graph
 from rootcause.interventions import compile_do
 from rootcause.results import ForecastResult, SampleDraws, ScoreResult, SimulationResult, UpdateResult
@@ -14,6 +15,8 @@ if TYPE_CHECKING:
 
 PANEL_KINDS = {"multi-environment-temporal", "multi-environment-static"}
 TEMPORAL_KINDS = {"temporal", "multi-environment-temporal"}
+AGGREGATES = {"sum", "avg", "min", "max"}
+BUMPS = {"patch", "minor", "major"}
 
 
 class Twin:
@@ -110,7 +113,7 @@ class Twin:
         """
         body = {"webhookUrl": webhook_url} if webhook_url else None
         envelope = self._transport.request("POST", f"{self._version_path()}/discover", json_body=body)
-        job_id = str(envelope["data"]["jobId"])
+        job_id = expect(envelope, "jobId", "discovery job")
         poll_job(self._transport, self._workspace_id, job_id, label=f"discover {self.name}", timeout=timeout)
         self._refresh_version()
         return self.graph
@@ -141,7 +144,7 @@ class Twin:
             return self
         body = {"webhookUrl": webhook_url} if webhook_url else None
         envelope = self._transport.request("POST", f"{self._version_path()}/train", json_body=body)
-        job_id = str(envelope["data"]["jobId"])
+        job_id = expect(envelope, "jobId", "training job")
         poll_job(self._transport, self._workspace_id, job_id, label=f"train {self.name}", timeout=timeout)
         self._refresh_version()
         return self
@@ -158,7 +161,7 @@ class Twin:
         """
         body = {"webhookUrl": webhook_url} if webhook_url else None
         envelope = self._transport.request("POST", f"{self._version_path()}/run-pipeline", json_body=body)
-        job_id = str(envelope["data"]["jobId"])
+        job_id = expect(envelope, "jobId", "pipeline job")
         poll_job(self._transport, self._workspace_id, job_id, label=f"pipeline {self.name}", timeout=timeout)
         self._refresh_version()
         return self
@@ -182,7 +185,7 @@ class Twin:
         Returns:
             A handle bound to the new, untrained version.
         """
-        body: dict[str, Any] = {"bump": bump}
+        body: dict[str, Any] = {"bump": _guard.choice(bump, "bump", BUMPS)}
         if base_version_id:
             body["baseVersionId"] = base_version_id
         if dataset_id:
@@ -280,7 +283,7 @@ class Twin:
         if webhook_url:
             body["webhookUrl"] = webhook_url
         envelope = self._transport.request("POST", f"{self._version_path()}/update-model", json_body=body)
-        job_id = str(envelope["data"]["jobId"])
+        job_id = expect(envelope, "jobId", "update job")
         job = poll_job(self._transport, self._workspace_id, job_id, label=f"update {self.name}", timeout=timeout)
         self._refresh_version()
         return UpdateResult(job)
@@ -369,14 +372,22 @@ class Twin:
             A [`ScoreResult`](#scoreresult) covering every row.
         """
         if hasattr(rows, "to_dict"):
-            rows = rows.to_dict(orient="records")  # type: ignore[union-attr]
-        body: dict[str, Any] = {"rows": rows, "targets": targets, "maxChanges": max_changes}
+            rows = _guard.frame(rows, "rows").to_dict(orient="records")
+        if not isinstance(rows, list) or not rows:
+            raise InvalidArgumentError("rows= must be a DataFrame or a non-empty list of dicts")
+        if not all(isinstance(row, dict) for row in rows):
+            raise InvalidArgumentError("rows= as a list must hold dicts keyed by twin variable name")
+        if not targets:
+            raise InvalidArgumentError(
+                'targets= must name at least one outcome to reach, as [{"variable": ..., "value": ...}]'
+            )
+        body: dict[str, Any] = {"rows": rows, "targets": targets, "maxChanges": _guard.positive(max_changes, "max_changes")}
         if constraints:
             body["constraints"] = constraints
         if webhook_url:
             body["webhookUrl"] = webhook_url
         envelope = self._transport.request("POST", f"{self._version_path()}/score", json_body=body)
-        run_id = str(envelope["data"]["runId"])
+        run_id = expect(envelope, "runId", "scoring run")
         poll_run(self._transport, self._workspace_id, run_id, label=f"score {self.name}", timeout=timeout)
         return ScoreResult(self._transport, self._workspace_id, run_id)
 
@@ -409,6 +420,7 @@ class Twin:
             RootCauseError: `environments` was passed for a twin that is not a
                 panel twin.
         """
+        n = _guard.positive(n, "n")
         interventions = compile_do(do, where) if do else []
         if self.is_panel:
             spec: dict[str, Any] = {
@@ -524,10 +536,14 @@ class Twin:
             )
         if aggregate is not None and not self.is_panel:
             raise RootCauseError(f'aggregate= only applies to panel twins; "{self.name}" is {self.kind}')
+        horizon = _guard.positive(horizon, "horizon")
+        confidence = _guard.probability(confidence, "confidence")
+        if aggregate is not None:
+            _guard.choice(aggregate, "aggregate", AGGREGATES)
         resolved_targets = targets or self._infer_targets()
         scenario: dict[str, Any] = {
             "type": "panel_forecast" if self.is_panel else "forecast",
-            "forecastH": int(horizon),
+            "forecastH": horizon,
             "targetVars": resolved_targets,
             "confidenceLevel": confidence,
             "originTimestamp": origin_timestamp,
@@ -555,7 +571,10 @@ class Twin:
         data = envelope.get("data", envelope)
         scenario = data.get("scenario") if isinstance(data, dict) else None
         if not isinstance(scenario, dict):
-            raise RootCauseError(f"Could not generate a scenario from that question; response: {data}")
+            raise RootCauseError(
+                "Could not turn that question into a scenario. Name the variables to change, what to "
+                f"change them to, and the outcome of interest. The translator answered: {str(data)[:200]}"
+            )
         return self._run_scenario(scenario, timeout=timeout)
 
     def console(self, *, height: int = 560, theme: str = "") -> "Any":
@@ -613,7 +632,9 @@ class Twin:
             The mounted widget, displayed by the notebook cell.
         """
         if (node is None) == (edge is None):
-            raise ValueError("Pass exactly one of node= or edge=(cause, effect).")
+            raise InvalidArgumentError("Pass exactly one of node= or edge=(cause, effect)")
+        if edge is not None and (not isinstance(edge, tuple) or len(edge) != 2):
+            raise InvalidArgumentError("edge= is a (cause, effect) pair of variable names")
         from rootcause.jupyter import app
 
         arguments: dict[str, Any] = {
@@ -624,7 +645,6 @@ class Twin:
         if node is not None:
             arguments["node"] = node
         else:
-            assert edge is not None
             arguments["edge"] = {"source": edge[0], "target": edge[1]}
         return app(
             "analyze_digital_twin_path",
@@ -722,21 +742,38 @@ class Twin:
         """Export this twin (trained params included) as a portable .rctwin zip.
 
         Args:
-            path: Where to write the `.rctwin` file.
+            path: Where to write the `.rctwin` file. A directory writes
+                `<twin name>.rctwin` inside it.
             include_runs: Include the simulation run history in the export.
             timeout: Seconds to wait for the export job.
 
         Returns:
             The path written, ready for `rc.load_twin()`.
+
+        Raises:
+            InvalidArgumentError: The destination directory does not exist. The
+                check runs before the export job starts.
         """
+        target = self._export_target(path)
         envelope = self._transport.request(
             "POST", f"{self._twin_path()}/export", json_body={"includeRuns": include_runs}
         )
-        job_id = str(envelope["data"]["jobId"])
+        job_id = expect(envelope, "jobId", "export job")
         poll_job(self._transport, self._workspace_id, job_id, label=f"export {self.name}", timeout=timeout)
         blob = self._transport.request_bytes("GET", f"{self._twin_path()}/export/{job_id}/download")
-        target = Path(path)
-        target.write_bytes(blob)
+        try:
+            target.write_bytes(blob)
+        except OSError as error:
+            raise InvalidArgumentError(f"Could not write {target}: {error.strerror or error}") from error
+        return target
+
+    def _export_target(self, path: str | Path) -> Path:
+        """Where save() will write, settled before the export job runs."""
+        target = Path(path).expanduser()
+        if target.is_dir():
+            target = target / f"{self.name}.rctwin"
+        if not target.parent.exists():
+            raise InvalidArgumentError(f"No directory {target.parent} to write {target.name} into")
         return target
 
     def _run_scenario(self, scenario: dict[str, Any], *, timeout: float) -> SimulationResult:
@@ -749,7 +786,7 @@ class Twin:
                 "scenario": scenario,
             },
         )
-        run_id = str(envelope["data"]["runId"])
+        run_id = expect(envelope, "runId", "simulation run")
         label = str(scenario.get("type", "simulation"))
         run_doc = poll_run(self._transport, self._workspace_id, run_id, label=label, timeout=timeout)
         return SimulationResult(self._transport, self._workspace_id, run_id, run_doc, scenario)
