@@ -18,6 +18,8 @@ from rootcause.twin import Twin
 if TYPE_CHECKING:
     import pandas as pd
 
+    from rootcause._links import PlatformLink
+
 
 class _Collection:
     """Name-or-id addressable collection over a list endpoint, with live completions."""
@@ -81,6 +83,12 @@ class Source:
         self._workspace_id = workspace_id
         self.doc = doc
 
+    def link(self) -> "PlatformLink":
+        """The source's detail page on the platform, as a clickable URL."""
+        from rootcause._links import workspace_link
+
+        return workspace_link(self._transport, self._workspace_id, f"/sources/{self.id}")
+
     @property
     def id(self) -> str:
         return str(self.doc.get("id") or self.doc.get("_id"))
@@ -134,6 +142,12 @@ class DataView:
         self._transport = transport
         self._workspace_id = workspace_id
         self.doc = doc
+
+    def link(self) -> "PlatformLink":
+        """The dataset's page on the platform, as a clickable URL."""
+        from rootcause._links import workspace_link
+
+        return workspace_link(self._transport, self._workspace_id, f"/datasets/{self.id}")
 
     @property
     def id(self) -> str:
@@ -324,6 +338,12 @@ class Workspace:
         self._transport = transport
         self.doc = doc
         self.ontology = Ontology(transport, self.id)
+
+    def link(self) -> "PlatformLink":
+        """The workspace's home page on the platform, as a clickable URL."""
+        from rootcause._links import workspace_link
+
+        return workspace_link(self._transport, self.id)
 
     @property
     def id(self) -> str:

@@ -101,6 +101,14 @@ class Twin:
     def graph(self) -> Graph:
         return Graph(self)
 
+    def link(self) -> "Any":
+        """This twin version's page on the platform, as a clickable URL."""
+        from rootcause._links import workspace_link
+
+        label = str(self.version.get("version") or "")
+        suffix = f"?version={label}" if label else ""
+        return workspace_link(self._transport, self._workspace_id, f"/twins/{self.id}{suffix}")
+
     def discover(self, *, webhook_url: str | None = None, timeout: float = 3600.0) -> Graph:
         """Run causal discovery on this version and return the discovered graph.
 
@@ -1063,6 +1071,10 @@ class EnvSubset:
             "/".join(item.values()) if isinstance(item, dict) else str(item) for item in self._requested
         )
         return f"EnvSubset({self.twin.name!r}, environments=[{labels}])"
+
+    def link(self) -> "Any":
+        """The parent twin's page on the platform, as a clickable URL."""
+        return self.twin.link()
 
     def _repr_html_(self) -> str:
         return f"<div><p><b>{self!r}</b></p>{self.environments.head(20)._repr_html_()}</div>"

@@ -147,6 +147,29 @@ class SimulationResult:
     def tables(self) -> list[str]:
         return [".".join(path) for path, _ in _walk_records(self.results)]
 
+    def link(self) -> "Any":
+        """This run's detail view on the platform, as a clickable URL.
+
+        Opens the parent twin's Simulate tab on exactly this run.
+        """
+        from rootcause._links import workspace_link
+
+        twin_id = str(self.run.get("digitalTwinId") or "")
+        if not twin_id:
+            envelope = self._transport.request(
+                "GET", f"/api/v1/workspaces/{self._workspace_id}/simulations/{self.run_id}"
+            )
+            doc = envelope.get("data", envelope)
+            twin_id = str(doc.get("digitalTwinId") or "")
+            self.run = {**doc, **self.run}
+        if not twin_id:
+            raise RootCauseError(f"Run {self.run_id} does not name its twin; cannot build a link")
+        return workspace_link(
+            self._transport,
+            self._workspace_id,
+            f"/twins/{twin_id}?tab=simulate&simulation={self.run_id}",
+        )
+
     def export(self, fmt: str = "csv") -> bytes:
         """The platform's own export of the run.
 
@@ -408,6 +431,23 @@ class ScoreResult:
         if max_rows is not None:
             rows = rows[:max_rows]
         return pd.json_normalize(rows)
+
+    def link(self) -> "Any":
+        """This scoring run's detail view on the platform, as a clickable URL."""
+        from rootcause._links import workspace_link
+
+        envelope = self._transport.request(
+            "GET", f"/api/v1/workspaces/{self._workspace_id}/simulations/{self.run_id}"
+        )
+        doc = envelope.get("data", envelope)
+        twin_id = str(doc.get("digitalTwinId") or "")
+        if not twin_id:
+            raise RootCauseError(f"Run {self.run_id} does not name its twin; cannot build a link")
+        return workspace_link(
+            self._transport,
+            self._workspace_id,
+            f"/twins/{twin_id}?tab=simulate&simulation={self.run_id}",
+        )
 
     def __repr__(self) -> str:
         verdicts = self.digest.get("verdictCounts") or {}

@@ -97,6 +97,20 @@ Resolve a workspace by name, and everything in it answers by name too. Collectio
 
 Everything tabular answers `to_frame()`. Everything long-running blocks with a progress line and raises a typed error if the job fails, so a notebook cell either completes or tells you why.
 
+## Jumping to the platform
+
+Every handle knows the page it lives on: `.link()` returns the platform URL, clickable in a notebook and linkified by most terminals.
+
+```python
+>>> twin.link()
+https://platform.rootcause.ai/{org}/space/{workspace}/twins/{twin}?version=1.0.2
+
+>>> result.link()   # a run links to its own detail view, not just the twin
+https://platform.rootcause.ai/{org}/space/{workspace}/twins/{twin}?tab=simulate&simulation={run}
+```
+
+Workspaces, sources, datasets, twins, the ontology, and simulation/forecast/scoring runs all answer it. The interactive apps' "Open in RootCause" buttons land on the same pages.
+
 ## Next steps
 
 * [Working with Digital Twins](sdk-working-with-twins.md): training, raw sampling, interventions, portable twins

@@ -39,6 +39,10 @@ class Graph:
         self._payload = None
         return self
 
+    def link(self) -> "Any":
+        """The twin page this graph is drawn on, as a clickable URL."""
+        return self._twin.link()
+
     @property
     def nodes(self) -> list[str]:
         payload = self._discovered()

@@ -170,6 +170,12 @@ class Ontology:
         self._workspace_id = workspace_id
         self._concept_cache: list[dict[str, Any]] | None = None
 
+    def link(self) -> "Any":
+        """The workspace's ontology page on the platform, as a clickable URL."""
+        from rootcause._links import workspace_link
+
+        return workspace_link(self._transport, self._workspace_id, "/ontology")
+
     def _base(self) -> str:
         return f"/api/v1/workspaces/{self._workspace_id}/ontology"
 
