@@ -166,3 +166,42 @@ class NotFoundInWorkspaceError(RootCauseError):
 
 class KindMismatchError(RootCauseError):
     """An explicit twin kind contradicts the panel/temporal kwargs supplied with it."""
+
+
+class AnchorSqlError(RootCauseError):
+    """The Anchor SQL engine refused a statement; carries the structured compile error.
+
+    Attributes:
+        code (str): Machine-readable error code, for example `unknown_concept`,
+            `parse_error` or `no_join_path`.
+        span (tuple[int, int] | None): Character range of the offending fragment
+            in the statement, when the engine could point at one.
+        candidates (list[dict]): Near-miss suggestions, each with `kind`, `id`,
+            `name` and `score`.
+        suggested_query (str | None): A corrected statement the engine proposes.
+        per_source (list[dict]): Per-dataset diagnostics when a join could not
+            be planned, each with `datasetId`, `datasetName` and `reason`.
+        body (dict): The raw structured error.
+    """
+
+    def __init__(self, error: "dict[str, Any] | None") -> None:
+        error = dict(error) if isinstance(error, dict) else {}
+        self.code = str(error.get("code") or "execution_error")
+        span = error.get("span")
+        self.span = (int(span[0]), int(span[1])) if isinstance(span, (list, tuple)) and len(span) == 2 else None
+        self.candidates: list[dict[str, Any]] = [c for c in (error.get("candidates") or []) if isinstance(c, dict)]
+        self.suggested_query = error.get("suggestedQuery")
+        self.per_source: list[dict[str, Any]] = [d for d in (error.get("perSource") or []) if isinstance(d, dict)]
+        self.body = error
+        message = f"[{self.code}] {error.get('message') or 'The statement could not be executed.'}"
+        names = [str(c.get("name")) for c in self.candidates if c.get("name")]
+        if names:
+            message += f" Closest matches: {', '.join(names[:5])}"
+        if self.per_source:
+            reasons = "; ".join(
+                f'{d.get("datasetName") or d.get("datasetId")}: {d.get("reason")}' for d in self.per_source[:3]
+            )
+            message += f" Per source — {reasons}"
+        if self.suggested_query:
+            message += f"\nTry: {self.suggested_query}"
+        super().__init__(message)
