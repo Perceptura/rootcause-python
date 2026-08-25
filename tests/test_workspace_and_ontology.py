@@ -1,6 +1,6 @@
 import pytest
 
-from rootcause.errors import AnchorSqlError, NotFoundInWorkspaceError, RootCauseError
+from rootcause.errors import AnchorSqlError, InvalidArgumentError, NotFoundInWorkspaceError, RootCauseError
 from rootcause.ontology import Ontology
 from rootcause.workspace import Workspace
 
@@ -51,7 +51,7 @@ def test_ontology_sql_sends_statement_and_limit(api, transport):
     api.on("POST", "/api/v1/workspaces/ws1/ontology/query", ROWS_PAGE)
     result = Ontology(transport, "ws1").sql('SELECT "revenue"', limit=50)
     body = api.body_of("POST", "/ontology/query")
-    assert body == {"anchorSql": 'SELECT "revenue"', "limit": 50}
+    assert body == {"anchorSql": 'SELECT "revenue"', "limit": 50, "projectionMode": "related"}
     assert result.kind == "rows"
     assert result.rows == [{"revenue": 1}]
     assert result.columns == ["revenue"]
@@ -68,6 +68,18 @@ def test_ontology_sql_start_key_resumes(api, transport):
     api.on("POST", "/api/v1/workspaces/ws1/ontology/query", ROWS_PAGE)
     Ontology(transport, "ws1").sql('SELECT "revenue"', start_key=200)
     assert api.body_of("POST", "/ontology/query")["startKey"] == 200
+
+
+def test_ontology_sql_forwards_projection_mode(api, transport):
+    api.on("POST", "/api/v1/workspaces/ws1/ontology/query", ROWS_PAGE)
+    Ontology(transport, "ws1").sql('SELECT "revenue"', projection_mode="minimal")
+    assert api.body_of("POST", "/ontology/query")["projectionMode"] == "minimal"
+
+
+def test_ontology_sql_rejects_unknown_projection_mode(api, transport):
+    with pytest.raises(InvalidArgumentError, match="projection_mode"):
+        Ontology(transport, "ws1").sql('SELECT "revenue"', projection_mode="wide")
+    assert api.requests == []
 
 
 def test_ontology_sql_paginates_to_frame(api, transport):
@@ -160,6 +172,14 @@ def test_ontology_sql_empty_frame_keeps_engine_columns(api, transport):
     frame = Ontology(transport, "ws1").sql('SELECT "revenue", "region" LIMIT 0').to_frame()
     assert list(frame.columns) == ["revenue", "region"]
     assert frame.empty
+
+
+def test_ontology_sql_html_escapes_warnings(api, transport):
+    payload = {"data": {**ROWS_PAGE["data"], "warnings": ["<script>alert(1)</script>"]}}
+    api.on("POST", "/api/v1/workspaces/ws1/ontology/query", payload)
+    rendered = Ontology(transport, "ws1").sql('SELECT "revenue"')._repr_html_()
+    assert "<script>" not in rendered
+    assert "&lt;script&gt;" in rendered
 
 
 def test_removed_query_and_ask_point_at_sql(api, transport):

@@ -1,7 +1,8 @@
 """The workspace semantic layer: concepts, and the query engine over them."""
 
 import difflib
-from typing import TYPE_CHECKING, Any
+import html
+from typing import TYPE_CHECKING, Any, Literal
 
 from rootcause._http import Transport
 from rootcause.errors import (
@@ -92,7 +93,7 @@ class AnchorSqlResult:
     def _repr_html_(self) -> str:
         import pandas as pd
 
-        warnings_html = "".join(f"<li>{warning}</li>" for warning in self.warnings)
+        warnings_html = "".join(f"<li>{html.escape(warning)}</li>" for warning in self.warnings)
         prefix = f"<ul>{warnings_html}</ul>" if warnings_html else ""
         return f"<div>{prefix}{pd.DataFrame(self.rows).head(20)._repr_html_()}</div>"
 
@@ -431,7 +432,14 @@ class Ontology:
         ]
         return pd.DataFrame(rows, columns=["field", "value", "detected"])
 
-    def sql(self, statement: str, *, limit: int = 1000, start_key: int | None = None) -> AnchorSqlResult:
+    def sql(
+        self,
+        statement: str,
+        *,
+        limit: int = 1000,
+        start_key: int | None = None,
+        projection_mode: Literal["related", "minimal"] = "related",
+    ) -> AnchorSqlResult:
         """Run an Anchor SQL statement over the workspace's concepts.
 
         Anchor SQL is SQL over ontology concepts, not tables. Concepts go by
@@ -458,6 +466,8 @@ class Ontology:
             start_key: Resume paging from a previous result's
                 `next_start_key`. [`to_frame`](#to_frame) pages transparently,
                 so this is only for driving pages by hand.
+            projection_mode: `related` adds ontology-linked context columns;
+                `minimal` returns only selected concepts and their anchors.
 
         Returns:
             An [`AnchorSqlResult`](#anchorsqlresult) — rows for a SELECT,
@@ -472,7 +482,13 @@ class Ontology:
             raise InvalidArgumentError(
                 "statement= is empty; pass an Anchor SQL statement (SHOW CONCEPTS lists what there is to query)"
             )
-        body: dict[str, Any] = {"anchorSql": statement, "limit": limit}
+        if projection_mode not in ("related", "minimal"):
+            raise InvalidArgumentError("projection_mode= must be 'related' or 'minimal'")
+        body: dict[str, Any] = {
+            "anchorSql": statement,
+            "limit": limit,
+            "projectionMode": projection_mode,
+        }
         if start_key is not None:
             body["startKey"] = start_key
         return AnchorSqlResult(self, self._post_sql(body), body)
