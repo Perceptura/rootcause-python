@@ -83,6 +83,14 @@ class Source:
         self._workspace_id = workspace_id
         self.doc = doc
 
+    def delete(self) -> None:
+        """Delete this source permanently. Requires the `sources:delete` scope.
+
+        Twins and datasets built on it keep their ids but lose their data —
+        delete or retrain those first.
+        """
+        self._transport.request("DELETE", self._path())
+
     def link(self) -> "PlatformLink":
         """The source's detail page on the platform, as a clickable URL."""
         from rootcause._links import workspace_link
@@ -142,6 +150,14 @@ class DataView:
         self._transport = transport
         self._workspace_id = workspace_id
         self.doc = doc
+
+    def delete(self) -> None:
+        """Delete this dataset permanently. Requires the `datasets:delete` scope.
+
+        Twins trained on it keep their fitted models but cannot retrain until
+        repointed at another dataset.
+        """
+        self._transport.request("DELETE", self._path())
 
     def link(self) -> "PlatformLink":
         """The dataset's page on the platform, as a clickable URL."""

@@ -8,6 +8,9 @@
 pip install rootcause-sdk
 ```
 
+> **Install `rootcause-sdk`, not `rootcause`.** The PyPI distribution is `rootcause-sdk`; only the
+> *import* name is `rootcause`. `pip install rootcause` succeeds and installs an unrelated project.
+
 ## Quick start
 
 The quickstart lives in the docs, so there is one canonical version of it:

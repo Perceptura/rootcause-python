@@ -8,6 +8,8 @@ Every RootCause MCP tool ships with an interactive app: the consoles that render
 pip install "rootcause-sdk[jupyter]"
 ```
 
+> **The distribution is `rootcause-sdk`, not `rootcause`.** Only the *import* name is `rootcause`; `pip install "rootcause[jupyter]"` reaches an unrelated PyPI project.
+
 That is the whole installation. There is no separate extension, no `jupyter labextension install`, no enable step. The widget front end ships inside the package and renders in JupyterLab, Notebook 7, VS Code notebooks, and Colab.
 
 ## Results display as their app

@@ -13,11 +13,15 @@ The SDK has two modes over one object model:
 pip install rootcause-sdk
 ```
 
+> **Install `rootcause-sdk`, not `rootcause`.** The PyPI distribution is `rootcause-sdk`; only the *import* name is `rootcause`. `pip install rootcause` succeeds and installs an unrelated project.
+
 For interactive apps under notebook cells, install the jupyter extra. There is no separate extension to install or enable; the widget front end ships inside the package:
 
 ```bash
 pip install "rootcause-sdk[jupyter]"
 ```
+
+> The extras hang off the same distribution name: `rootcause-sdk[jupyter]`, never `rootcause[jupyter]`.
 
 ## Authentication
 

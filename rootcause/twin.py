@@ -101,6 +101,15 @@ class Twin:
     def graph(self) -> Graph:
         return Graph(self)
 
+    def delete(self) -> None:
+        """Delete this twin permanently: models, versions, runs and record.
+
+        Running discovery or simulation workflows are cancelled first. There is
+        no undo — the platform's own delete confirmation exists for a reason.
+        Requires the `digital-twins:delete` scope.
+        """
+        self._transport.request("DELETE", self._twin_path())
+
     def link(self) -> "Any":
         """This twin version's page on the platform, as a clickable URL."""
         from rootcause._links import workspace_link

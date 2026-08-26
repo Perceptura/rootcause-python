@@ -24,6 +24,8 @@ revenue                      0.0          0.0  0.000000  0.000000
 
 `adjacency` also takes `values="sign"` or `values="bool"`, and `to_numpy()` and `to_networkx()` convert onward (networkx needs `pip install "rootcause-sdk[graph]"`).
 
+> The distribution is `rootcause-sdk`, not `rootcause` — only the *import* name is `rootcause`, and `pip install "rootcause[graph]"` reaches an unrelated PyPI project.
+
 ## Domain knowledge
 
 Encode what you know with two verbs. `pin` fixes an edge as present, `forbid` fixes it as absent, and both write into the version's fixed subgraph that discovery and training honour:
@@ -229,6 +231,18 @@ PosixPath('c8.rctwin')
 ```
 
 Compute always stays on the platform; the file makes the model portable between environments, not the algorithms.
+
+## Cleaning up
+
+`twin.delete()` removes a twin permanently — fitted models, every version, the run history, and the record itself; running workflows are cancelled first. Sources and datasets answer the same verb. There is no undo, which makes the iterate-and-discard loop explicit:
+
+```python
+>>> for twin in ws.twins:
+...     if twin.name.startswith("experiment-"):
+...         twin.delete()
+```
+
+Deletion needs the matching scope on your key (`digital-twins:delete`, `sources:delete`, `datasets:delete`).
 
 ## Next steps
 
