@@ -28,6 +28,7 @@ from rootcause import direct as _direct
 from rootcause._display import auto_apps
 from rootcause._http import Transport, resolve_transport
 from rootcause.errors import (
+    AnchorSqlError,
     AuthenticationError,
     ConnectionFailedError,
     InvalidArgumentError,
@@ -42,7 +43,7 @@ from rootcause.errors import (
 )
 from rootcause.graph import Graph
 from rootcause.interventions import add, adjust_prob, at, mean_metrics, members, metric, pct, prob, range, set  # noqa: A004
-from rootcause.ontology import Ontology, OntologyQueryResult
+from rootcause.ontology import AnchorSqlResult, Ontology
 from rootcause.results import ForecastResult, SampleDraws, ScoreResult, SimulationResult, UpdateResult
 from rootcause.twin import Twin
 from rootcause.workspace import Connector, DataView, Source, Workspace
@@ -249,6 +250,8 @@ def render_widget(widget: dict[str, Any], theme: str = "light") -> str:
 
 
 __all__ = [
+    "AnchorSqlError",
+    "AnchorSqlResult",
     "AuthenticationError",
     "ConnectionFailedError",
     "Connector",
@@ -263,7 +266,6 @@ __all__ = [
     "MissingDependencyError",
     "NotFoundInWorkspaceError",
     "Ontology",
-    "OntologyQueryResult",
     "RootCauseApiError",
     "RootCauseError",
     "SampleDraws",

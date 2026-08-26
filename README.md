@@ -50,20 +50,16 @@ Interventions: `rc.set(value)`, `rc.pct(+15)`, `rc.add(-5)`, `rc.prob("yes", 0.8
 
 ## Ontology queries
 
+Anchor SQL: SQL over concepts, not tables. Concepts go by quoted name and the
+ontology plans the joins — no FROM tables, no JOINs:
+
 ```python
 onto = ws.ontology
 onto.concepts
 
-result = onto.query(
-    select=["customer", "revenue"],
-    where=[("region", "==", "US")],
-    group_by=["customer"],
-    order_by="-revenue",
-    aggregate={"revenue": "sum"},
-)
-result.to_frame()
-
-onto.ask("average revenue per customer in Florida last quarter")
+onto.sql('SELECT "customer", sum("revenue") WHERE "region" = \'US\' GROUP BY "customer"').to_frame()
+onto.sql('SELECT time(month), avg("revenue") GROUP BY time(month)').to_frame()
+onto.sql("SHOW CONCEPTS").to_frame()
 ```
 
 ## Portable twins
