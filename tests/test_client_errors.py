@@ -565,27 +565,22 @@ def _ontology(api, transport, concepts=()) -> Ontology:
     return Ontology(transport, "ws1")
 
 
-def test_an_empty_query_is_refused(api, transport):
-    with pytest.raises(InvalidArgumentError, match="select="):
-        _ontology(api, transport).query()
+def test_an_empty_sql_statement_is_refused(api, transport):
+    with pytest.raises(InvalidArgumentError, match="statement="):
+        _ontology(api, transport).sql("   ")
     assert api.requests == []
 
 
-def test_an_unknown_filter_operator_lists_the_real_ones(api, transport):
-    ontology = _ontology(api, transport, [{"id": "c1", "name": "Revenue"}])
-    with pytest.raises(InvalidArgumentError, match="Unknown operator"):
-        ontology.query(select=["Revenue"], where=[("Revenue", "approximately", 5)])
+def test_removed_query_names_the_replacement_before_any_request(api, transport):
+    with pytest.raises(RootCauseError, match="Anchor SQL"):
+        _ontology(api, transport).query(select=["Revenue"], where=[("Revenue", ">=", 5)])
+    assert api.requests == []
 
 
-def test_a_malformed_filter_tuple_says_the_shape(api, transport):
-    ontology = _ontology(api, transport, [{"id": "c1", "name": "Revenue"}])
-    with pytest.raises(InvalidArgumentError, match="triples"):
-        ontology.query(select=["Revenue"], where=[("Revenue", 5)])
-
-
-def test_an_empty_prompt_is_refused(api, transport):
-    with pytest.raises(InvalidArgumentError, match="prompt="):
-        _ontology(api, transport).ask("   ")
+def test_removed_ask_names_the_replacement_before_any_request(api, transport):
+    with pytest.raises(RootCauseError, match="Anchor SQL"):
+        _ontology(api, transport).ask("average revenue in Florida")
+    assert api.requests == []
 
 
 # --- notebook apps -----------------------------------------------------------

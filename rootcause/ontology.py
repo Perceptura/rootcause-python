@@ -1,10 +1,12 @@
 """The workspace semantic layer: concepts, and the query engine over them."""
 
 import difflib
-from typing import TYPE_CHECKING, Any
+import html
+from typing import TYPE_CHECKING, Any, Literal
 
 from rootcause._http import Transport
 from rootcause.errors import (
+    AnchorSqlError,
     InvalidArgumentError,
     NotFoundInWorkspaceError,
     RootCauseApiError,
@@ -12,82 +14,86 @@ from rootcause.errors import (
 )
 
 if TYPE_CHECKING:
+    from typing import NoReturn
+
     import pandas as pd
 
-_ONTOLOGY_OPERATORS = {
-    "eq": "eq", "==": "eq", "equals": "eq",
-    "neq": "neq", "!=": "neq", "<>": "neq",
-    "gt": "gt", ">": "gt",
-    "gte": "gte", ">=": "gte",
-    "lt": "lt", "<": "lt",
-    "lte": "lte", "<=": "lte",
-    "between": "between", "in": "in", "contains": "contains",
-}
 
-
-class OntologyQueryResult:
-    """Rows out of the ontology query engine, plus the compiled dataset and any warnings.
+class AnchorSqlResult:
+    """One Anchor SQL response: rows, a metadata listing, or a validated plan.
 
     Attributes:
+        kind (str): `rows` for a materialised result, `metadata` for
+            SHOW/DESCRIBE output, `validated` for a compile-only pass.
         rows (list[dict]): The first page of rows.
-        row_count (int | None): Total rows the query matched.
-        schema (list): Column schema for the rows.
-        warnings (list[str]): Anything the engine wants you to know about the
-            join.
-        dataset (dict | None): The compiled dataset definition, persistable via
-            the API.
-        query (dict | None): For `ask()`, the structured query the translator
-            produced.
-        next_cursor (str | None): Cursor for the next page, when there is one.
-        summary (str | None): The engine's narrative summary, when it made one.
+        columns (list[str]): Column order for the rows.
+        units (dict[str, str]): Unit id per column, where the ontology knows
+            one.
+        row_count (int | None): Rows in this page.
+        total_row_count (int | None): Total rows the statement matched, when
+            the engine counted them.
+        truncated (bool): Whether the result was cut at the engine's cap.
+        next_start_key (int | None): Resume point for the next page — pass it
+            back as `start_key=`, or let [`to_frame`](#to_frame) page for you.
+            None when this page is the last.
+        plan (dict): The compiled plan: scope, spine, join and grain chips,
+            plus the join strategy the ontology chose.
+        warnings (list[str]): Anything the planner wants you to know.
+        statement (str): The statement as the engine echoed it back.
     """
 
     def __init__(self, ontology: "Ontology", payload: dict[str, Any], request_body: dict[str, Any]) -> None:
         self._ontology = ontology
         self._request_body = request_body
-        pagination = payload.get("pagination") or {}
-        self.rows: list[dict[str, Any]] = list(payload.get("rows", []))
-        self.next_cursor = pagination.get("cursor")
-        self.schema = payload.get("schema", [])
+        self.kind = str(payload.get("kind") or "rows")
+        self.rows: list[dict[str, Any]] = list(payload.get("rows") or [])
+        self.columns: list[str] = [str(column) for column in payload.get("columns") or []]
+        self.units: dict[str, str] = dict(payload.get("units") or {})
         self.row_count = payload.get("rowCount")
-        self.dataset = payload.get("dataset")
-        self.warnings: list[str] = list(payload.get("warnings", []))
-        self.summary = payload.get("summary")
-        self.query = payload.get("query") or request_body.get("query")
+        self.total_row_count = payload.get("totalRowCount")
+        self.truncated = bool(payload.get("truncated", False))
+        self.next_start_key = payload.get("nextStartKey")
+        self.plan: dict[str, Any] = dict(payload.get("plan") or {})
+        self.warnings: list[str] = list(payload.get("warnings") or [])
+        self.statement = str(payload.get("sql") or payload.get("command") or request_body.get("anchorSql", ""))
 
     def to_frame(self, max_rows: int | None = None) -> "pd.DataFrame":
-        """Every row, paging transparently.
+        """Every row, paging transparently through `next_start_key`.
 
         Args:
             max_rows: Stop after this many rows. Fetches everything when
                 omitted.
 
         Returns:
-            The rows as a DataFrame.
+            The rows as a DataFrame, columns in engine order.
         """
         import pandas as pd
 
         rows = list(self.rows)
-        cursor = self.next_cursor
-        while cursor is not None and (max_rows is None or len(rows) < max_rows):
-            page = self._ontology._post_query({**self._request_body, "cursor": cursor})
-            rows.extend(page.get("rows", []))
-            cursor = (page.get("pagination") or {}).get("cursor")
+        start_key = self.next_start_key
+        while start_key is not None and (max_rows is None or len(rows) < max_rows):
+            page = self._ontology._post_sql({**self._request_body, "startKey": start_key})
+            rows.extend(page.get("rows") or [])
+            start_key = page.get("nextStartKey")
         if max_rows is not None:
             rows = rows[:max_rows]
-        frame = pd.DataFrame(rows)
-        artifacts = [column for column in frame.columns if str(column).startswith("__index_level_")]
-        return frame.drop(columns=artifacts)
+        if self.columns:
+            return pd.DataFrame(rows, columns=self.columns)
+        return pd.DataFrame(rows)
 
     def __repr__(self) -> str:
-        total = self.row_count if self.row_count is not None else f"{len(self.rows)}+"
+        if self.kind != "rows":
+            return f"AnchorSqlResult(kind={self.kind!r}, rows={len(self.rows)})"
+        total = self.total_row_count if self.total_row_count is not None else self.row_count
+        shown = len(self.rows) if total is None else total
+        more = "+" if self.next_start_key is not None and total is None else ""
         warn = f", warnings={len(self.warnings)}" if self.warnings else ""
-        return f"OntologyQueryResult(rows={total}{warn})"
+        return f"AnchorSqlResult(rows={shown}{more}{warn})"
 
     def _repr_html_(self) -> str:
         import pandas as pd
 
-        warnings_html = "".join(f"<li>{warning}</li>" for warning in self.warnings)
+        warnings_html = "".join(f"<li>{html.escape(warning)}</li>" for warning in self.warnings)
         prefix = f"<ul>{warnings_html}</ul>" if warnings_html else ""
         return f"<div>{prefix}{pd.DataFrame(self.rows).head(20)._repr_html_()}</div>"
 
@@ -426,106 +432,92 @@ class Ontology:
         ]
         return pd.DataFrame(rows, columns=["field", "value", "detected"])
 
-    def query(
+    def sql(
         self,
-        select: list[str] | None = None,
-        where: list[tuple[str, str, Any]] | None = None,
-        group_by: list[str] | None = None,
-        order_by: str | list[str] | None = None,
-        aggregate: dict[str, str] | None = None,
-        sources: list[str] | None = None,
+        statement: str,
+        *,
         limit: int = 1000,
-        wide: bool = True,
-        page_size: int = 1000,
-    ) -> OntologyQueryResult:
-        """Execute a structured ontology query; concepts go by name or id.
+        start_key: int | None = None,
+        projection_mode: Literal["related", "minimal"] = "related",
+    ) -> AnchorSqlResult:
+        """Run an Anchor SQL statement over the workspace's concepts.
+
+        Anchor SQL is SQL over ontology concepts, not tables. Concepts go by
+        quoted name, and the ontology plans the joins across every mapped
+        source — there are no tables to FROM and no JOINs to write
+        (`FROM source:"name"` exists only to narrow scope). The reserved
+        anchors `entity`, `time` and `location` take grains like `time(month)`
+        or `location(country)`; aggregates with GROUP BY / HAVING / ORDER BY /
+        LIMIT work as in SQL, and metrics defined in the workspace are
+        referenced by name verbatim. `SHOW CONCEPTS`, `SHOW METRICS`,
+        `SHOW SOURCES` and `DESCRIBE "x"` answer metadata about what there is
+        to query.
+
+        ```python
+        onto.sql('SELECT "Monthly Charges" WHERE "Contract" = \\'Month-to-month\\'')
+        onto.sql('SELECT time(month), avg("Revenue") GROUP BY time(month)')
+        onto.sql("SHOW CONCEPTS")
+        onto.sql('DESCRIBE "Revenue"')
+        ```
 
         Args:
-            select: Concepts to return, by name or id.
-            where: Filters as `(concept, operator, value)`. Operators are
-                `eq`, `neq`, `gt`, `gte`, `lt`, `lte`, `between`, `in`,
-                `contains`, or their symbols.
-            group_by: Concepts to group by.
-            order_by: Concept, or concepts, to order by.
-            aggregate: Aggregate function per concept, as
-                `{"Revenue": "sum"}`.
-            sources: Restrict the query to these source ids.
-            limit: Row cap on the whole query.
-            wide: Return one column per concept rather than long format.
-            page_size: Rows per page fetched from the API.
+            statement: The Anchor SQL statement.
+            limit: Rows per page, 1 to 10000.
+            start_key: Resume paging from a previous result's
+                `next_start_key`. [`to_frame`](#to_frame) pages transparently,
+                so this is only for driving pages by hand.
+            projection_mode: `related` adds ontology-linked context columns;
+                `minimal` returns only selected concepts and their anchors.
 
         Returns:
-            An [`OntologyQueryResult`](#ontologyqueryresult).
+            An [`AnchorSqlResult`](#anchorsqlresult) — rows for a SELECT,
+            a metadata listing for SHOW/DESCRIBE.
+
+        Raises:
+            AnchorSqlError: The engine refused the statement; carries the
+                error code, the offending span, near-miss candidates and a
+                suggested corrected statement when the engine has one.
         """
-        if not select and not aggregate:
-            raise InvalidArgumentError("Pass select=[...] concepts to return, or aggregate={...}")
-        for clause in where or []:
-            if not isinstance(clause, (tuple, list)) or len(clause) != 3:
-                raise InvalidArgumentError(
-                    f"where= items are (concept, operator, value) triples, not {clause!r}"
-                )
-        query: dict[str, Any] = {
-            "conceptIds": [self._concept_id(name) for name in (select or [])],
-            "filters": [
-                {
-                    "conceptId": self._concept_id(concept),
-                    "operator": self._operator(operator),
-                    "value": value,
-                }
-                for concept, operator, value in (where or [])
-            ],
-            "aggregations": [
-                {"conceptId": self._concept_id(concept), "function": function}
-                for concept, function in (aggregate or {}).items()
-            ],
-            "groupBy": [self._concept_id(name) for name in (group_by or [])],
-            "orderBy": self._order(order_by),
-            "sourceIds": sources or [],
-            "wide": wide,
-            "limit": limit,
-        }
-        body = {"query": query, "limit": page_size}
-        return OntologyQueryResult(self, self._post_query(body), body)
-
-    def ask(self, prompt: str, page_size: int = 1000) -> OntologyQueryResult:
-        """Natural-language question, translated server-side.
-
-        Args:
-            prompt: The question, in plain language.
-            page_size: Rows per page fetched from the API.
-
-        Returns:
-            An [`OntologyQueryResult`](#ontologyqueryresult); `result.query` is
-            the structured query the translator produced.
-        """
-        if not str(prompt).strip():
-            raise InvalidArgumentError("prompt= is empty; ask the question you want answered")
-        body = {"prompt": prompt, "limit": page_size}
-        payload = self._post_query(body)
-        result = OntologyQueryResult(self, payload, {"query": payload.get("query"), "limit": page_size})
-        return result
-
-    def _post_query(self, body: dict[str, Any]) -> dict[str, Any]:
-        envelope = self._transport.request("POST", f"{self._base()}/query", json_body=body)
-        return envelope.get("data", envelope)
-
-    def _operator(self, operator: str) -> str:
-        resolved = _ONTOLOGY_OPERATORS.get(str(operator).strip().lower())
-        if resolved is None:
+        if not str(statement).strip():
             raise InvalidArgumentError(
-                f'Unknown operator "{operator}". Use one of {sorted(set(_ONTOLOGY_OPERATORS.values()))}'
+                "statement= is empty; pass an Anchor SQL statement (SHOW CONCEPTS lists what there is to query)"
             )
-        return resolved
+        if projection_mode not in ("related", "minimal"):
+            raise InvalidArgumentError("projection_mode= must be 'related' or 'minimal'")
+        body: dict[str, Any] = {
+            "anchorSql": statement,
+            "limit": limit,
+            "projectionMode": projection_mode,
+        }
+        if start_key is not None:
+            body["startKey"] = start_key
+        return AnchorSqlResult(self, self._post_sql(body), body)
 
-    def _order(self, order_by: str | list[str] | None) -> list[dict[str, str]]:
-        if order_by is None:
-            return []
-        entries = [order_by] if isinstance(order_by, str) else list(order_by)
-        compiled = []
-        for entry in entries:
-            direction = "desc" if entry.startswith("-") else "asc"
-            compiled.append({"conceptId": self._concept_id(entry.lstrip("+-")), "direction": direction})
-        return compiled
+    def query(self, *args: Any, **kwargs: Any) -> "NoReturn":
+        """Removed — the query endpoint now speaks Anchor SQL; use [`sql`](#sql)."""
+        raise RootCauseError(
+            "Ontology.query() was removed: the platform's ontology query engine now speaks Anchor SQL. "
+            "Rewrite the query with onto.sql() — "
+            "query(select=[\"Revenue\"], where=[(\"Region\", \"==\", \"US\")], aggregate={\"Revenue\": \"sum\"}) "
+            "becomes onto.sql('SELECT sum(\"Revenue\") WHERE \"Region\" = \\'US\\''). "
+            "onto.sql(\"SHOW CONCEPTS\") lists what you can reference."
+        )
+
+    def ask(self, *args: Any, **kwargs: Any) -> "NoReturn":
+        """Removed — server-side translation is gone; write Anchor SQL with [`sql`](#sql)."""
+        raise RootCauseError(
+            "Ontology.ask() was removed: the platform no longer translates prompts server-side. "
+            "Write the question as Anchor SQL with onto.sql() — concepts go by quoted name, "
+            "e.g. onto.sql('SELECT \"customer\", avg(\"Revenue\") GROUP BY \"customer\"'). "
+            "onto.sql(\"SHOW CONCEPTS\") lists what you can reference."
+        )
+
+    def _post_sql(self, body: dict[str, Any]) -> dict[str, Any]:
+        envelope = self._transport.request("POST", f"{self._base()}/query", json_body=body)
+        payload = envelope.get("data", envelope)
+        if isinstance(payload, dict) and payload.get("ok") is False:
+            raise AnchorSqlError(payload.get("error"))
+        return payload
 
     def __repr__(self) -> str:
         return f"Ontology(concepts={len(self._concepts_raw())})"

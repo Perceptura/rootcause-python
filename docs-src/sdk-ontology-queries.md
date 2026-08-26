@@ -20,71 +20,72 @@ Every upload gets concepts during ingest. List them, or grab one by name with ta
 '5Z8yb2XPu9LwDHAUdexjv'
 ```
 
-## Structured queries
+## Anchor SQL
 
-Concepts go by name or id. Operators are `eq neq gt gte lt lte between in contains` or their symbol spellings:
+Queries are Anchor SQL: SQL over concepts, not tables. Reference a concept by quoted name and the ontology plans the joins across every mapped source — there is no table to `FROM` and no `JOIN` to write:
 
 ```python
->>> result = onto.query(
-...     select=["Revenue", "Leads"],
-...     where=[("Revenue", ">=", 300)],
-...     order_by="-Revenue",
-...     limit=1000,
-... )
+>>> result = onto.sql('SELECT "Revenue", "Leads" WHERE "Revenue" >= 300 ORDER BY "Revenue" DESC')
 >>> result
-OntologyQueryResult(rows=134)
+AnchorSqlResult(rows=134)
 >>> result.to_frame().head()
-   marketing_spend  seasonality  leads  revenue
-0            72.55        1.498  237.2    542.6
-1            74.30        0.433  234.9    540.7
-2            66.03        2.537  238.2    537.4
-3            65.08        1.085  218.8    505.5
-4            64.99        0.637  210.6    492.2
+   revenue  leads
+0    542.6  237.2
+1    540.7  234.9
+2    537.4  238.2
+3    505.5  218.8
+4    492.2  210.6
 ```
 
-`to_frame()` pages through the full result transparently. The engine compiles the query into a dataset (joins, filters, aggregations across every mapped source), executes it, and returns rows along with everything it decided:
+`to_frame()` pages through the full result transparently (drive pages by hand with `result.next_start_key` passed back as `start_key=`). The result also carries everything the planner decided:
 
 ```python
 >>> result.warnings      # e.g. a join over a low-cardinality key
 []
->>> result.dataset       # the compiled dataset definition, persistable via the API
+>>> result.plan          # scope, spine, join and grain chips, plus the join strategy
+>>> result.units         # unit id per column, where the ontology knows one
 ```
 
-Aggregations and grouping follow the same shape:
+The reserved anchors `entity`, `time` and `location` take grains, aggregates group and filter as in SQL, and metrics defined in the workspace go by name verbatim:
 
 ```python
->>> onto.query(
-...     select=["customer", "Revenue"],
-...     group_by=["customer"],
-...     aggregate={"Revenue": "sum"},
-...     order_by="-Revenue",
-... ).to_frame()
+>>> onto.sql('SELECT "customer", sum("Revenue") GROUP BY "customer" ORDER BY sum("Revenue") DESC').to_frame()
+>>> onto.sql('SELECT time(month), avg("Monthly Charges") WHERE "Contract" = \'Month-to-month\' GROUP BY time(month)').to_frame()
 ```
 
-## Natural language
+`FROM` is scope sugar only — `FROM source:"shipments"` narrows which source answers, it never names a table.
 
-`ask` translates a question into a structured query server side, runs it, and hands back both:
+## Metadata commands
+
+`SHOW CONCEPTS`, `SHOW METRICS`, `SHOW SOURCES` and `DESCRIBE "x"` answer what there is to query, as rows:
 
 ```python
->>> result = onto.ask("average revenue per customer in Florida last quarter")
->>> result.query         # the structured query the translator produced
->>> result.to_frame()
+>>> onto.sql("SHOW CONCEPTS").to_frame()
+>>> onto.sql('DESCRIBE "Revenue"').to_frame()
 ```
 
-The translated query coming back with the rows means an analyst can inspect exactly what was asked, adjust it, and re-run it structurally.
+## When a statement is refused
+
+A refused statement raises `AnchorSqlError` carrying the structured compile error — the machine `code`, the offending `span`, near-miss `candidates`, and a `suggested_query` when the engine has one:
+
+```python
+>>> onto.sql('SELECT "Revenu"')
+AnchorSqlError: [unknown_concept] Unknown concept "Revenu". Closest matches: Revenue
+Try: SELECT "Revenue"
+```
 
 ## Over the REST API
 
-Both forms are one endpoint, `POST /api/v1/workspaces/{wsId}/ontology/query`:
+The same engine is one endpoint, `POST /api/v1/workspaces/{wsId}/ontology/query`:
 
 ```bash
 curl -X POST "https://sandbox.rootcause.ai/api/v1/workspaces/ws_123/ontology/query" \
   -H "Authorization: Bearer pk_your_key" \
   -H "Content-Type: application/json" \
-  -d '{"query": {"conceptIds": ["c_rev"], "limit": 100}, "limit": 100}'
+  -d '{"anchorSql": "SELECT \"Revenue\" WHERE \"Region\" = '\''US'\''", "limit": 100}'
 ```
 
-Pass `{"prompt": "..."}` instead of `query` for natural language. The response carries `rows`, `nextStartKey` for paging, `schema`, `rowCount`, the compiled `dataView`, and `warnings`. Requires the `ontology:read` scope.
+It always answers 200 with a union under `data` discriminated by `ok` and `kind`: rows responses carry `rows`, `columns`, `units`, `rowCount`, the compiled `plan`, `warnings` and `nextStartKey` (pass back as `startKey` for the next page); SHOW/DESCRIBE answer a `metadata` listing; refused statements answer `ok: false` with the structured error. Requires the `ontology:read` scope.
 
 ## Next steps
 
