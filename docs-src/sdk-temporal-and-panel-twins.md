@@ -154,6 +154,59 @@ SimulationResult(panel_intervention, run=VSaJAnryhPoDccHKQnyjY, status=completed
 
 Over REST this is `POST .../versions/{vId}/graph/slice` — the subset can also be defined by column values or per-environment stat filters, not just exact combos.
 
+## Saving a subset as an environment group
+
+A handle from `twin.env(...)` lives as long as the Python object does. `save()` puts it on the twin as a named **environment group**, which lives as long as the twin does:
+
+```python
+>>> eu = twin.env("london", "berlin").save("EU stores")
+>>> eu
+Group('EU stores', id=VSaJCq7nDtRfXbW2hLpKy)
+```
+
+What gets stored is the rule, not the answer. Naming environments stores the exact combos; a `where=` subset stores the filter, so it re-selects as the data moves — "high revenue" next quarter means whichever stores are high-revenue then, not the ones that were today:
+
+```python
+>>> twin.env(where=[("revenue", "avg", ">", 400)]).save("High revenue")
+Group('High revenue', id=VSaJDm4kBhTgYcN8rQvEs)
+```
+
+Groups belong to the twin, not to a version, so they survive retraining, and they are the same groups the platform's environment picker lists — a group saved from a notebook is in the dropdown by the time you switch tabs. Next session it comes back by name:
+
+```python
+>>> twin.groups
+[Group('EU stores', id=VSaJCq7nDtRfXbW2hLpKy), Group('High revenue', id=VSaJDm4kBhTgYcN8rQvEs)]
+>>> eu = twin.group("EU stores")
+>>> eu.environments[["envKey", "store"]]
+   envKey   store
+0  london  london
+1  berlin  berlin
+```
+
+A group is an `EnvSubset` with a memory: the same `graph`, `environments`, `sample`, `intervene` and `forecast`, scoped to what the group means on this version right now. Membership is resolved server-side on first use and cached on the handle, so `eu.graph` and `eu.forecast(...)` agree with each other.
+
+Simulations differ in one way that matters. A `twin.env(...)` handle expands to a list of environment names and sends those; a group is sent by id, and the platform freezes what it resolved onto the run:
+
+```python
+>>> result = eu.intervene({"price": rc.at(rc.pct(-10), persistent=True)}, outcomes=["revenue"])
+>>> result.environment_groups
+[{'id': 'VSaJCq7nDtRfXbW2hLpKy', 'name': 'EU stores', 'envKeys': ['london', 'berlin'], 'droppedEnvKeys': []}]
+```
+
+That snapshot is the run's provenance: it says which group the run covered and what the group meant at submit time. Editing or deleting the group afterwards never rewrites it, and `droppedEnvKeys` names members this version could not honour.
+
+Edits are twin-level, so they apply to every version at once. `update()` takes the same vocabulary as `env()`:
+
+```python
+>>> eu.rename("Eurozone")
+Group('Eurozone', id=VSaJCq7nDtRfXbW2hLpKy)
+>>> eu.update(where=[("region", "==", "EMEA")])
+Group('Eurozone', id=VSaJCq7nDtRfXbW2hLpKy)
+>>> eu.delete()
+```
+
+Because the rule outlives the data it was written against, a group can stop fitting. Two outcomes, and they are not the same thing: a group that resolves cleanly and matches nothing is empty — the rule is fine, the environments moved on — while a group naming a column this version does not have raises with the reason it cannot be evaluated at all.
+
 ## Monthly refresh: assimilate instead of retrain
 
 When next month's rows arrive, the model doesn't need rebuilding. Extend the twin's source with the new rows and fold them into the fitted model with `update()` — seconds, not a training run. It finishes with a status, never an error: `committed` (rows folded in), `up_to_date` (nothing new), or `retrain_required` (the model can't take these rows incrementally — `result.reasons` says why; call `twin.retrain()`).

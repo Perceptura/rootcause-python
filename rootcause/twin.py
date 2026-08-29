@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 from rootcause import _guard
 from rootcause._http import Transport, expect, poll_job, poll_run
-from rootcause.errors import InvalidArgumentError, RootCauseError
+from rootcause.errors import InvalidArgumentError, RootCauseApiError, RootCauseError
 from rootcause.graph import Graph
 from rootcause.interventions import compile_do
 from rootcause.results import ForecastResult, SampleDraws, ScoreResult, SimulationResult, UpdateResult
@@ -361,6 +361,46 @@ class Twin:
             )
         return EnvSubset(self, list(environments))
 
+    @property
+    def groups(self) -> "list[Group]":
+        """The twin's saved environment groups — the same ones the platform's picker lists.
+
+        Groups belong to the twin rather than to a version, so they survive
+        retraining; each one's membership is resolved against this handle's
+        version when you touch it.
+        """
+        envelope = self._transport.request("GET", f"{self._twin_path()}/environment-groups")
+        docs = envelope.get("data", envelope)
+        return [Group(self, doc) for doc in docs] if isinstance(docs, list) else []
+
+    def group(self, name_or_id: str) -> "Group":
+        """One saved environment group, by name or id.
+
+        Args:
+            name_or_id: The group's display name (case-insensitive) or its id.
+
+        Returns:
+            A [`Group`](#group): the same scoped surface as
+            [`env()`](#env), pinned to a saved membership rule.
+
+        Raises:
+            RootCauseError: The twin has no such group; the message names the
+                ones it does have.
+        """
+        groups = self.groups
+        for group in groups:
+            if name_or_id in (group.id, group.name):
+                return group
+        lowered = name_or_id.lower()
+        for group in groups:
+            if group.name.lower() == lowered:
+                return group
+        known = ", ".join(group.name for group in groups) or "none saved yet"
+        raise RootCauseError(
+            f'No environment group "{name_or_id}" on "{self.name}" (known: {known}). '
+            'Save one with twin.env(...).save("name").'
+        )
+
     def score(
         self,
         rows: "pd.DataFrame | list[dict[str, Any]]",
@@ -492,28 +532,7 @@ class Twin:
         Raises:
             RootCauseError: Neither `metrics` nor `outcomes` was given.
         """
-        if metrics is None:
-            if not outcomes:
-                raise RootCauseError(
-                    "Interventions need at least one metric. Pass outcomes=['revenue'] for "
-                    "mean-of-column metrics, metrics=[rc.metric(...)] for custom SQL, or use "
-                    "twin.sample(do=...) for raw draws."
-                )
-            from rootcause.interventions import mean_metrics
-
-            metrics = mean_metrics(outcomes)
-        interventions = compile_do(do, where)
-        if self.is_panel:
-            scenario: dict[str, Any] = {
-                "type": "panel_intervention",
-                "interventions": interventions,
-                "metrics": metrics or [],
-                "environments": environments,
-            }
-        elif self.is_temporal:
-            scenario = {"type": "temporal_intervention", "interventions": interventions, "metrics": metrics or []}
-        else:
-            scenario = {"type": "intervention", "interventions": interventions, "metrics": metrics or []}
+        scenario = self._intervention_scenario(do, where, metrics, outcomes, environments)
         return self._run_scenario(scenario, timeout=timeout)
 
     def forecast(
@@ -547,6 +566,49 @@ class Twin:
             RootCauseError: The twin is not temporal, or `aggregate` was passed
                 for a twin that is not a panel twin.
         """
+        scenario = self._forecast_scenario(horizon, targets, environments, confidence, origin_timestamp, aggregate)
+        result = self._run_scenario(scenario, timeout=timeout)
+        return ForecastResult(self._transport, self._workspace_id, result.run_id, result.run, scenario)
+
+    def _intervention_scenario(
+        self,
+        do: dict[str, Any],
+        where: Any,
+        metrics: list[dict[str, Any]] | None,
+        outcomes: list[str] | None,
+        environments: list[str] | None,
+    ) -> dict[str, Any]:
+        if metrics is None:
+            if not outcomes:
+                raise RootCauseError(
+                    "Interventions need at least one metric. Pass outcomes=['revenue'] for "
+                    "mean-of-column metrics, metrics=[rc.metric(...)] for custom SQL, or use "
+                    "twin.sample(do=...) for raw draws."
+                )
+            from rootcause.interventions import mean_metrics
+
+            metrics = mean_metrics(outcomes)
+        interventions = compile_do(do, where)
+        if self.is_panel:
+            return {
+                "type": "panel_intervention",
+                "interventions": interventions,
+                "metrics": metrics or [],
+                "environments": environments,
+            }
+        if self.is_temporal:
+            return {"type": "temporal_intervention", "interventions": interventions, "metrics": metrics or []}
+        return {"type": "intervention", "interventions": interventions, "metrics": metrics or []}
+
+    def _forecast_scenario(
+        self,
+        horizon: int,
+        targets: list[str] | None,
+        environments: list[str] | None,
+        confidence: float,
+        origin_timestamp: int | None,
+        aggregate: str | None,
+    ) -> dict[str, Any]:
         if not self.is_temporal:
             raise RootCauseError(
                 f'"{self.name}" is a {self.kind} twin; forecasting needs a temporal or panel-temporal twin'
@@ -557,19 +619,17 @@ class Twin:
         confidence = _guard.probability(confidence, "confidence")
         if aggregate is not None:
             _guard.choice(aggregate, "aggregate", AGGREGATES)
-        resolved_targets = targets or self._infer_targets()
         scenario: dict[str, Any] = {
             "type": "panel_forecast" if self.is_panel else "forecast",
             "forecastH": horizon,
-            "targetVars": resolved_targets,
+            "targetVars": targets or self._infer_targets(),
             "confidenceLevel": confidence,
             "originTimestamp": origin_timestamp,
         }
         if self.is_panel:
             scenario["environments"] = environments
             scenario["aggregateMode"] = aggregate
-        result = self._run_scenario(scenario, timeout=timeout)
-        return ForecastResult(self._transport, self._workspace_id, result.run_id, result.run, scenario)
+        return scenario
 
     def ask(self, query: str, *, timeout: float = 3600.0) -> SimulationResult:
         """Natural-language question, turned into a scenario and executed.
@@ -793,15 +853,24 @@ class Twin:
             raise InvalidArgumentError(f"No directory {target.parent} to write {target.name} into")
         return target
 
-    def _run_scenario(self, scenario: dict[str, Any], *, timeout: float) -> SimulationResult:
+    def _run_scenario(
+        self,
+        scenario: dict[str, Any],
+        *,
+        timeout: float,
+        environment_group_ids: list[str] | None = None,
+    ) -> SimulationResult:
+        body: dict[str, Any] = {
+            "digitalTwinId": self.id,
+            "digitalTwinVersionId": self.version_id,
+            "scenario": scenario,
+        }
+        if environment_group_ids is not None:
+            body["environmentGroupIds"] = environment_group_ids
         envelope = self._transport.request(
             "POST",
             f"/api/v1/workspaces/{self._workspace_id}/simulations",
-            json_body={
-                "digitalTwinId": self.id,
-                "digitalTwinVersionId": self.version_id,
-                "scenario": scenario,
-            },
+            json_body=body,
         )
         run_id = expect(envelope, "runId", "simulation run")
         label = str(scenario.get("type", "simulation"))
@@ -922,6 +991,9 @@ class EnvSubset:
             self._resolved = envelope.get("data", envelope)
         return self._resolved
 
+    def _server_resolved(self) -> bool:
+        return self._stat_filters is not None
+
     @property
     def environments(self) -> "pd.DataFrame":
         """The environments this handle covers, resolved to a DataFrame.
@@ -932,7 +1004,7 @@ class EnvSubset:
         """
         import pandas as pd
 
-        if self._stat_filters is not None:
+        if self._server_resolved():
             resolved = self._resolve_filters()
             rows = [
                 {"envKey": key, **combo}
@@ -964,7 +1036,7 @@ class EnvSubset:
         The listing carries each environment's values as a list ordered by
         environmentColumns; zipping the two recovers the combo.
         """
-        if self._stat_filters is not None:
+        if self._server_resolved():
             return [dict(c) for c in (self._resolve_filters().get("environments") or [])]
         payload: dict[str, Any] | None = None
         resolved: list[dict[str, str]] = []
@@ -994,7 +1066,7 @@ class EnvSubset:
         return resolved
 
     def _names(self) -> list[str]:
-        if self._stat_filters is not None:
+        if self._server_resolved():
             return [str(k) for k in (self._resolve_filters().get("envKeys") or [])]
         names: list[str] = []
         for item in self._requested:
@@ -1008,6 +1080,52 @@ class EnvSubset:
             else:
                 names.append(item)
         return names
+
+    def _definition(self) -> dict[str, Any]:
+        if self._stat_filters is not None:
+            return {"mode": "statFilters", "statFilters": self._stat_filters}
+        return {"mode": "environments", "environments": self.combos()}
+
+    def save(self, name: str) -> "Group":
+        """Save this subset on the twin as a named environment group.
+
+        The group lives on the twin rather than on a version, so it survives
+        retraining, appears in the platform's environment picker straight away,
+        and comes back next session as `twin.group(name)`. What gets stored is
+        the rule, not the answer: a `where=` subset saves its filters and
+        re-selects environments as the data moves, while a named subset saves
+        the exact combos it resolved to.
+
+        ```python
+        eu = twin.env("london", "berlin").save("EU stores")
+        twin.group("EU stores").intervene({"price": rc.pct(-10)}, outcomes=["revenue"])
+        ```
+
+        Args:
+            name: Display name, unique per twin.
+
+        Returns:
+            The saved [`Group`](#group).
+
+        Raises:
+            RootCauseError: The twin already has a group with this name, or is
+                at its group cap.
+        """
+        try:
+            envelope = self.twin._transport.request(
+                "POST",
+                f"{self.twin._twin_path()}/environment-groups",
+                json_body={"name": name, "definition": self._definition()},
+            )
+        except RootCauseApiError as error:
+            if error.status == 409:
+                raise RootCauseError(
+                    f'Could not save "{name}" on "{self.twin.name}": {error.detail} Group names are '
+                    f'unique per twin — pick another name, or change the existing group with '
+                    f'twin.group("{name}").update(...).'
+                ) from error
+            raise
+        return Group(self.twin, envelope.get("data", envelope))
 
     def adjacency(self, agreement_threshold: float | None = None) -> "pd.DataFrame":
         """The causal adjacency aggregated over just this subset of environments.
@@ -1100,3 +1218,182 @@ class EnvSubset:
             },
             transport=self.twin._transport,
         ))
+
+
+class Group(EnvSubset):
+    """A saved environment group: the same scoped surface as a subset, kept on the twin.
+
+    Everything an [`EnvSubset`](#envsubset) does, a group does against its
+    current membership — the rule is stored, not the answer, so it is resolved
+    against this handle's version on first use and re-resolved after an edit.
+    Simulations name the group rather than expanding it, so the run records
+    which group it covered and what that meant at submit time.
+
+    Attributes:
+        doc (dict): The stored group document.
+    """
+
+    def __init__(self, twin: Twin, doc: dict[str, Any]) -> None:
+        super().__init__(twin, [])
+        self.doc = doc
+
+    @property
+    def id(self) -> str:
+        return str(self.doc.get("id") or self.doc.get("_id"))
+
+    @property
+    def name(self) -> str:
+        return str(self.doc.get("name", self.id))
+
+    @property
+    def definition(self) -> dict[str, Any]:
+        """The stored membership rule: `environments`, `columnValues`, or `statFilters` mode."""
+        definition = self.doc.get("definition")
+        return definition if isinstance(definition, dict) else {}
+
+    def _path(self) -> str:
+        return f"{self.twin._twin_path()}/environment-groups/{self.id}"
+
+    def _server_resolved(self) -> bool:
+        return True
+
+    def _resolve_filters(self) -> dict[str, Any]:
+        if self._resolved is None:
+            envelope = self.twin._transport.request(
+                "POST",
+                f"{self.twin._version_path()}/environment-groups/resolve",
+                json_body={"groupId": self.id},
+            )
+            resolved = envelope.get("data", envelope)
+            resolved = resolved if isinstance(resolved, dict) else {}
+            unresolvable = resolved.get("unresolvable")
+            if isinstance(unresolvable, dict):
+                columns = ", ".join(str(c) for c in (unresolvable.get("columns") or []))
+                reason = f'{unresolvable.get("reason")}; columns: {columns}' if columns else str(unresolvable.get("reason"))
+                raise RootCauseError(
+                    f'Environment group "{self.name}" does not fit version '
+                    f'{self.twin.version_id} of "{self.twin.name}": '
+                    f'{unresolvable.get("message") or unresolvable.get("reason")} [{reason}]'
+                )
+            self._resolved = resolved
+        return self._resolved
+
+    def _definition(self) -> dict[str, Any]:
+        return self.definition
+
+    def rename(self, name: str) -> "Group":
+        """Rename the group in place.
+
+        Args:
+            name: The new display name, unique per twin.
+
+        Returns:
+            This group.
+
+        Raises:
+            RootCauseError: The twin already has a group with this name.
+        """
+        return self._patch({"name": name})
+
+    def update(
+        self,
+        *environments: "str | dict[str, str]",
+        where: "list[tuple] | dict[str, Any] | None" = None,
+        definition: dict[str, Any] | None = None,
+    ) -> "Group":
+        """Replace the group's membership rule, in the same vocabulary as `twin.env()`.
+
+        ```python
+        group.update("london", "berlin", "paris")            # exact environments
+        group.update(where=[("revenue", "avg", ">", 400)])   # a filter, re-selected as data moves
+        ```
+
+        Runs already submitted keep the membership frozen on their snapshots;
+        every later read of the group sees the new rule.
+
+        Args:
+            *environments: Environment names, envKeys, or `{column: value}`
+                combos, as [`env()`](#env) takes them.
+            where: Stat filters instead of names, as [`env()`](#env) takes
+                them.
+            definition: A raw definition document, when you have one already.
+
+        Returns:
+            This group, on the new rule.
+
+        Raises:
+            RootCauseError: None (or more than one) of the three selection
+                styles was passed.
+        """
+        chosen = [bool(environments), where is not None, definition is not None]
+        if sum(chosen) != 1:
+            raise RootCauseError(
+                "Pass exactly one of environments, where=, or definition= to update a group"
+            )
+        if definition is None:
+            definition = self.twin.env(*environments, where=where)._definition()
+        return self._patch({"definition": definition})
+
+    def delete(self) -> None:
+        """Delete the group from the twin.
+
+        Nothing downstream goes with it: runs scoped to the group keep their
+        snapshots. Deleting a group that is already gone is a no-op.
+        """
+        try:
+            self.twin._transport.request("DELETE", self._path())
+        except RootCauseApiError as error:
+            if error.status != 404:
+                raise
+
+    def _patch(self, body: dict[str, Any]) -> "Group":
+        try:
+            envelope = self.twin._transport.request("PATCH", self._path(), json_body=body)
+        except RootCauseApiError as error:
+            if error.status == 409:
+                raise RootCauseError(
+                    f'Could not update "{self.name}": {error.detail} Group names are unique per twin.'
+                ) from error
+            raise
+        doc = envelope.get("data", envelope)
+        if isinstance(doc, dict) and doc:
+            self.doc = doc
+        self._resolved = None
+        return self
+
+    def intervene(
+        self,
+        do: dict[str, Any],
+        where: Any = None,
+        metrics: list[dict[str, Any]] | None = None,
+        outcomes: list[str] | None = None,
+        *,
+        timeout: float = 3600.0,
+    ) -> SimulationResult:
+        scenario = self.twin._intervention_scenario(do, where, metrics, outcomes, None)
+        return self.twin._run_scenario(scenario, timeout=timeout, environment_group_ids=[self.id])
+
+    def forecast(
+        self,
+        horizon: int,
+        targets: list[str] | None = None,
+        confidence: float = 0.95,
+        origin_timestamp: int | None = None,
+        aggregate: str | None = None,
+        *,
+        timeout: float = 3600.0,
+    ) -> ForecastResult:
+        scenario = self.twin._forecast_scenario(horizon, targets, None, confidence, origin_timestamp, aggregate)
+        result = self.twin._run_scenario(scenario, timeout=timeout, environment_group_ids=[self.id])
+        return ForecastResult(
+            self.twin._transport, self.twin._workspace_id, result.run_id, result.run, scenario
+        )
+
+    def link(self) -> "Any":
+        """The parent twin's page on the platform, as a clickable URL."""
+        return self.twin.link()
+
+    def __repr__(self) -> str:
+        if self._resolved is not None:
+            return f"Group({self.name!r}, environments={len(self._resolved.get('envKeys') or [])})"
+        return f"Group({self.name!r}, id={self.id})"

@@ -95,6 +95,19 @@ class SimulationResult:
         return self._results
 
     @property
+    def environment_groups(self) -> list[dict[str, Any]]:
+        """The saved environment groups this run was scoped to, as the platform froze them.
+
+        One entry per group — `{id, name, envKeys, droppedEnvKeys, notice?}` —
+        recording the membership resolved at submit time, so editing or
+        deleting the group afterwards never rewrites what the run covered;
+        `droppedEnvKeys` names members this version could not honour. Empty for
+        a run that named no groups.
+        """
+        snapshots = self.run.get("environmentGroupSnapshots")
+        return [dict(entry) for entry in snapshots if isinstance(entry, dict)] if isinstance(snapshots, list) else []
+
+    @property
     def summary(self) -> str:
         if self._summary is None:
             envelope = self._transport.request(
