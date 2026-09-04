@@ -42,9 +42,9 @@ from rootcause.errors import (
     RootCauseError,
 )
 from rootcause.graph import Graph
-from rootcause.interventions import add, adjust_prob, at, mean_metrics, members, metric, pct, prob, range, set  # noqa: A004
+from rootcause.interventions import add, adjust_prob, at, mean_metrics, members, metric, objective, pct, prob, range, set  # noqa: A004
 from rootcause.ontology import AnchorSqlResult, Ontology
-from rootcause.results import ForecastResult, SampleDraws, ScoreResult, SimulationResult, UpdateResult
+from rootcause.results import ForecastResult, PredictionResult, SampleDraws, ScoreResult, SimulationResult, UpdateResult
 from rootcause.twin import Twin
 from rootcause.workspace import Connector, DataView, Source, Workspace
 
@@ -266,6 +266,7 @@ __all__ = [
     "MissingDependencyError",
     "NotFoundInWorkspaceError",
     "Ontology",
+    "PredictionResult",
     "RootCauseApiError",
     "RootCauseError",
     "SampleDraws",
@@ -283,6 +284,7 @@ __all__ = [
     "mean_metrics",
     "members",
     "metric",
+    "objective",
     "pct",
     "prob",
     "render_widget",

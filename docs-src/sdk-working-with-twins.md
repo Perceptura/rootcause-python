@@ -1,6 +1,6 @@
 # Python SDK: Working with Digital Twins
 
-This guide covers the full twin lifecycle: inspecting a discovered graph, encoding domain knowledge, training, sampling raw draws, running interventions and forecasts, and moving trained twins between environments. Outputs shown are real transcripts.
+This guide covers the full twin lifecycle: inspecting a discovered graph, encoding domain knowledge, training, asking a trained twin every question the platform can answer, sampling raw draws, and moving trained twins between environments. Outputs shown are real transcripts.
 
 ## The causal graph
 
@@ -75,6 +75,109 @@ UpdateResult(status='committed', rows=60)
 ```
 
 The three statuses are the contract: `committed` (new rows folded in), `up_to_date` (nothing new since the last update), and `retrain_required` (the model can't take these rows incrementally — `result.reasons` says why; call `twin.retrain()`). Static and temporal twins assimilate out of the box; panel twins need the v2 panel engine (an opt-in in the twin builder). `twin.update_eligibility` answers the same question read-only, so an orchestrator can decide without starting a job. The full monthly-refresh pattern, including the Airflow shape, is in [Temporal and Panel Twins](sdk-temporal-and-panel-twins.md#monthly-refresh-assimilate-instead-of-retrain).
+
+## Asking a trained twin a question
+
+Every simulation family the platform's New Simulation wizard offers has a verb here, and each one blocks until the run completes. Which verb a twin accepts depends on what kind of twin it is, and the SDK refuses the wrong one before submitting anything rather than letting the platform answer with a 422:
+
+| Question | Verb | Twin kinds |
+| --- | --- | --- |
+| What will this specific case do? | `predict` | static, multi-environment static |
+| What happens over time? | `forecast` | temporal, multi-environment temporal |
+| What if we change X? | `intervene` | every kind |
+| Why does this happen? | `explain` | every kind |
+| What should we change? | `optimise` | every kind |
+| How do I reach a goal? | `score` | static |
+| Why is this variable broken? | `root_cause` | every kind |
+| Is anything broken at all? | `anomalies` | every kind |
+
+`intervene`, `forecast` and `score` have sections of their own further down; the rest are covered here.
+
+### Prediction
+
+`predict` answers for the rows you hand it: one prediction per input record, with an uncertainty interval around each. Leave the target columns out of the input: those are what the model answers with.
+
+```python
+>>> at_risk = pd.DataFrame([
+...     {"tenure": 3,  "MonthlyCharges": 85.0, "Contract": "Month-to-month"},
+...     {"tenure": 40, "MonthlyCharges": 20.0, "Contract": "Two year"},
+... ])
+>>> result = twin.predict(at_risk, targets=["Churn"])
+>>> result.to_frame()[["row", "prediction", "probabilities"]]
+   row prediction                                 probabilities
+0    0        Yes  [0.5774936183230309, 0.4225063816769691]
+1    1         No  [0.1032418871283461, 0.8967581128716539]
+```
+
+The `row` column is the position of the input record each prediction answers for, so the frame joins straight back onto the one you asked about. A second target adds a `variable` column instead of dropping a series, and `confidence=` sets the interval width.
+
+Targets are inferred from the version's variable roles when you leave `targets` off. Prediction reads one row at a time, so it is a static-twin verb: a temporal twin projects forward with `forecast` instead, and says so rather than guessing.
+
+### Explanation
+
+`explain` asks the model why, and the mode follows from what you name, so you rarely pass `mode` yourself:
+
+```python
+>>> twin.explain(effect="Churn")                      # what drives churn
+>>> twin.explain(cause="Contract")                    # what contract length goes on to affect
+>>> twin.explain(cause="Contract", effect="Churn")    # the paths from one to the other
+```
+
+The result carries a ranked driver list with effect sizes, confidence intervals, dose-response curves for numeric causes, and the split between direct and indirect pathways. Panel twins take `environments=` to narrow which environments are explained.
+
+### Optimization
+
+`optimise` searches for the actions that best move your objectives. Objectives are measured by SQL over the sampled frame, which is registered as `df`, `data`, and `dataset`; `decision_vars` is the set of levers the optimizer is allowed to touch:
+
+```python
+>>> churn = rc.objective(
+...     "Churn share",
+...     "SELECT AVG(CASE WHEN Churn = 'Yes' THEN 1.0 ELSE 0.0 END) AS value FROM df",
+...     "minimise",
+... )
+>>> result = twin.optimise([churn], decision_vars=["Contract", "MonthlyCharges"])
+```
+
+`rc.objective` takes either spelling of maximise/minimise, plus `unit=` and `weight=` for trading several objectives off against each other. Add `variable_constraints=` to bound how far a lever may move, `metric_constraints=` for guardrails every plan must respect, and `max_changes=` to cap how many variables one plan may touch.
+
+A temporal twin optimizes over a horizon and needs `horizon=`; a static one optimizes a single period and refuses it. Panel twins take `environments=`.
+
+> A categorical outcome has to be counted, not averaged. `SELECT AVG("Churn")` over a text column is not a number, and the run fails inside the engine rather than at submission. Count the category you care about with `CASE WHEN`, as above.
+
+### Diagnosis
+
+Two verbs, and which one you want depends on whether you already know what is wrong. `root_cause` traces one named variable upstream to what actually broke it:
+
+```python
+>>> observed = pd.DataFrame([{"tenure": 2, "MonthlyCharges": 105.0, "Churn": "Yes"}])
+>>> twin.root_cause("Churn", observed)
+```
+
+`anomalies` scans every variable instead, and diagnoses whatever it flags:
+
+```python
+>>> twin.anomalies(observed)
+```
+
+Both take `target_fpr=` to set detection sensitivity as a false-positive rate (lower flags less), and both need the observations you want diagnosed: there is no scanning the training data by default. On a temporal twin `root_cause` takes a `timestep=` to diagnose and `anomalies` takes a `start_step`/`end_step` window.
+
+Panel twins can either share one set of rows across every environment, by passing a flat list, or give each environment its own by passing a mapping:
+
+```python
+>>> twin.anomalies({"uk": uk_rows, "france": fr_rows})
+```
+
+### When there is no verb for it
+
+`ask` runs the platform's own scenario generator over a plain-English question and executes whatever it produces, which reaches the families that have no dedicated verb yet:
+
+```python
+>>> result = twin.ask("what happens to bookings if we cut trade shows entirely?")
+>>> result.scenario["type"]
+'intervention'
+```
+
+`result.scenario` is what the translator built, so it doubles as the way to discover a scenario shape you then send yourself.
 
 ## Batch scoring
 
@@ -210,14 +313,6 @@ Temporal and panel-temporal twins forecast. Target variables are inferred from t
 ```python
 >>> fc = twin.forecast(horizon=24, targets=["revenue"], environments=["uk"])
 >>> fc.to_frame()        # environment, series, timestamps, confidence bands
-```
-
-## Natural language
-
-`ask` uses the same scenario generator as the platform's New Simulation wizard, then runs the generated scenario:
-
-```python
->>> twin.ask("what happens to bookings if we cut trade shows entirely?")
 ```
 
 ## Portable twins

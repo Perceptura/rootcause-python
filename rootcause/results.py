@@ -60,6 +60,20 @@ def _walk_records(node: Any, path: tuple[str, ...] = ()) -> list[tuple[tuple[str
     return found
 
 
+def _variable_series(results: Any) -> list[list[tuple[str, list[dict[str, Any]]]]]:
+    """Record lists sitting directly under a `results` map, grouped by that map.
+
+    One group per `results` map found in the payload, each holding
+    `(variable, records)` in payload order: what a per-target family stores when
+    it answers for several variables at once.
+    """
+    by_parent: dict[tuple[str, ...], list[tuple[str, list[dict[str, Any]]]]] = {}
+    for path, records in _walk_records(results):
+        if len(path) >= 2 and path[-2] == "results":
+            by_parent.setdefault(path[:-1], []).append((path[-1], records))
+    return list(by_parent.values())
+
+
 class SimulationResult:
     """A completed simulation run: raw outputs plus best-effort tabular and narrative views.
 
@@ -347,11 +361,7 @@ class ForecastResult(SimulationResult):
                 return pd.concat(frames, ignore_index=True)
         # A multi-target forecast stores one series per variable under `results`;
         # picking the largest would silently drop every other target.
-        by_parent: dict[tuple[str, ...], list[tuple[str, list[dict[str, Any]]]]] = {}
-        for candidate_path, records in _walk_records(self.results):
-            if len(candidate_path) >= 2 and candidate_path[-2] == "results":
-                by_parent.setdefault(candidate_path[:-1], []).append((candidate_path[-1], records))
-        series_groups = [group for group in by_parent.values() if len(group) > 1]
+        series_groups = [group for group in _variable_series(self.results) if len(group) > 1]
         if series_groups:
             group = max(series_groups, key=lambda g: sum(len(records) for _, records in g))
             frames = []
@@ -361,6 +371,49 @@ class ForecastResult(SimulationResult):
                 frames.append(frame)
             return pd.concat(frames, ignore_index=True)
         return super().to_frame()
+
+
+class PredictionResult(ForecastResult):
+    """Prediction run: one row per input record, per target.
+
+    Everything on [`SimulationResult`](#simulationresult) applies. `to_frame()`
+    adds a `row` column carrying the 0-based position of the input record each
+    prediction answers for, so predictions join back onto the frame they were
+    asked about; a `variable` column names the target when several were
+    predicted, and an `environment` column the environment on a panel twin.
+    """
+
+    def to_frame(self, path: str | None = None) -> "pd.DataFrame":
+        pd = _pandas()
+        if path is not None:
+            return SimulationResult.to_frame(self, path)
+        env_results, _ = self._env_results(self.results)
+        if isinstance(env_results, dict) and env_results:
+            frames = []
+            for environment, payload in env_results.items():
+                frame = self._rows_by_variable(payload)
+                if frame is not None:
+                    frame.insert(0, "environment", environment)
+                    frames.append(frame)
+            if frames:
+                return pd.concat(frames, ignore_index=True)
+        frame = self._rows_by_variable(self.results)
+        return frame if frame is not None else SimulationResult.to_frame(self)
+
+    def _rows_by_variable(self, results: Any) -> "pd.DataFrame | None":
+        pd = _pandas()
+        groups = _variable_series(results)
+        if not groups:
+            return None
+        group = max(groups, key=lambda entries: sum(len(records) for _, records in entries))
+        frames = []
+        for variable, records in group:
+            frame = pd.DataFrame(records)
+            frame.insert(0, "row", list(range(len(records))))
+            if len(group) > 1:
+                frame.insert(0, "variable", variable)
+            frames.append(frame)
+        return pd.concat(frames, ignore_index=True)
 
 
 class UpdateResult:

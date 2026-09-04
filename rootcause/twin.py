@@ -1,4 +1,4 @@
-"""The digital twin handle: train, score, sample, intervene, forecast, update, export."""
+"""The digital twin handle: train, predict, simulate, explain, diagnose, optimise, export."""
 
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -8,15 +8,52 @@ from rootcause._http import Transport, expect, poll_job, poll_run
 from rootcause.errors import InvalidArgumentError, RootCauseApiError, RootCauseError
 from rootcause.graph import Graph
 from rootcause.interventions import compile_do
-from rootcause.results import ForecastResult, SampleDraws, ScoreResult, SimulationResult, UpdateResult
+from rootcause.results import (
+    ForecastResult,
+    PredictionResult,
+    SampleDraws,
+    ScoreResult,
+    SimulationResult,
+    UpdateResult,
+)
 
 if TYPE_CHECKING:
     import pandas as pd
 
 PANEL_KINDS = {"multi-environment-temporal", "multi-environment-static"}
 TEMPORAL_KINDS = {"temporal", "multi-environment-temporal"}
+PREDICT_KINDS = {"static", "multi-environment-static"}
 AGGREGATES = {"sum", "avg", "min", "max"}
 BUMPS = {"patch", "minor", "major"}
+EXPLANATION_MODES = {"directional", "discovery", "impact"}
+
+# One scenario family, one name per twin kind: the platform spells the same
+# question differently depending on what the twin is, and picking the wrong
+# spelling is a 422 rather than a wrong answer.
+EXPLANATION_TYPES = {
+    "static": "explanation",
+    "temporal": "temporal_explanation",
+    "multi-environment-static": "panel_explanation",
+    "multi-environment-temporal": "panel_explanation",
+}
+OPTIMISATION_TYPES = {
+    "static": "optimisation",
+    "temporal": "temporal_optimisation",
+    "multi-environment-static": "panel_optimisation",
+    "multi-environment-temporal": "panel_optimisation",
+}
+ROOT_CAUSE_TYPES = {
+    "static": "root_cause_analysis",
+    "temporal": "temporal_root_cause_analysis",
+    "multi-environment-static": "static_panel_root_cause_analysis",
+    "multi-environment-temporal": "panel_root_cause_analysis",
+}
+ANOMALY_TYPES = {
+    "static": "anomaly_detection",
+    "temporal": "temporal_anomaly_detection",
+    "multi-environment-static": "static_panel_anomaly_detection",
+    "multi-environment-temporal": "panel_anomaly_detection",
+}
 
 
 class Twin:
@@ -428,12 +465,7 @@ class Twin:
         Returns:
             A [`ScoreResult`](#scoreresult) covering every row.
         """
-        if hasattr(rows, "to_dict"):
-            rows = _guard.frame(rows, "rows").to_dict(orient="records")
-        if not isinstance(rows, list) or not rows:
-            raise InvalidArgumentError("rows= must be a DataFrame or a non-empty list of dicts")
-        if not all(isinstance(row, dict) for row in rows):
-            raise InvalidArgumentError("rows= as a list must hold dicts keyed by twin variable name")
+        rows = _guard.records(rows, "rows")
         if not targets:
             raise InvalidArgumentError(
                 'targets= must name at least one outcome to reach, as [{"variable": ..., "value": ...}]'
@@ -570,6 +602,213 @@ class Twin:
         result = self._run_scenario(scenario, timeout=timeout)
         return ForecastResult(self._transport, self._workspace_id, result.run_id, result.run, scenario)
 
+    def predict(
+        self,
+        sample: "pd.DataFrame | list[dict[str, Any]]",
+        targets: list[str] | None = None,
+        confidence: float = 0.95,
+        *,
+        timeout: float = 3600.0,
+    ) -> PredictionResult:
+        """Predict target outcomes for input records, with uncertainty intervals.
+
+        One prediction per input record: the model reads the values you supply
+        as the drivers and answers for the targets you name. Static twins only:
+        a temporal twin projects forward with `forecast()` instead.
+
+        Args:
+            sample: The input records, as a DataFrame or a list of dicts keyed
+                by twin variable name. Leave the target columns out: those are
+                what the model answers with.
+            targets: Variables to predict. Inferred from the twin when omitted.
+            confidence: Width of the uncertainty interval, as a probability.
+            timeout: Seconds to wait for the run.
+
+        Returns:
+            A [`PredictionResult`](#predictionresult), one row per input record.
+
+        Raises:
+            RootCauseError: The twin is temporal, where `forecast()` is the verb.
+
+        Examples:
+            >>> twin.predict([{"tenure": 3, "MonthlyCharges": 85.0}], targets=["Churn"])
+        """
+        scenario = self._prediction_scenario(sample, targets, confidence)
+        result = self._run_scenario(scenario, timeout=timeout)
+        return PredictionResult(self._transport, self._workspace_id, result.run_id, result.run, scenario)
+
+    def explain(
+        self,
+        cause: str | None = None,
+        effect: str | None = None,
+        mode: str | None = None,
+        environments: list[str] | None = None,
+        *,
+        timeout: float = 3600.0,
+    ) -> SimulationResult:
+        """Explain a causal relationship: what a variable drives, or what drives it.
+
+        The mode follows from what you name, so you rarely pass it: `cause=`
+        alone asks what that variable goes on to affect (`impact`), `effect=`
+        alone asks what drives it (`discovery`), and both together explain the
+        paths from one to the other (`directional`).
+
+        Args:
+            cause: The upstream variable, for `impact` and `directional`.
+            effect: The downstream variable, for `discovery` and `directional`.
+            mode: Override the mode: `directional`, `discovery`, or `impact`.
+            environments: Panel twins: which environments to explain.
+            timeout: Seconds to wait for the run.
+
+        Returns:
+            A [`SimulationResult`](#simulationresult).
+
+        Raises:
+            RootCauseError: Neither variable was named, the mode is unknown, the
+                mode is missing a variable it needs, or `environments` was
+                passed for a twin that is not a panel twin.
+
+        Examples:
+            >>> twin.explain(effect="Churn")
+            >>> twin.explain(cause="Contract", effect="Churn")
+        """
+        scenario = self._explanation_scenario(cause, effect, mode, environments)
+        return self._run_scenario(scenario, timeout=timeout)
+
+    def optimise(
+        self,
+        objectives: list[dict[str, Any]],
+        decision_vars: list[str],
+        horizon: int | None = None,
+        environments: list[str] | None = None,
+        variable_constraints: list[dict[str, Any]] | None = None,
+        metric_constraints: list[dict[str, Any]] | None = None,
+        max_changes: int | None = None,
+        *,
+        timeout: float = 3600.0,
+    ) -> SimulationResult:
+        """Search for the actions that best move your objectives.
+
+        The optimizer may only touch the variables you list in
+        `decision_vars`, and it measures every plan through the objectives'
+        SQL, so an objective naming a variable nothing in `decision_vars` can
+        reach has no plan to find.
+
+        Args:
+            objectives: What to move and which way, from `rc.objective()`.
+            decision_vars: The variables the optimizer is allowed to change.
+            horizon: Temporal twins: how many steps ahead the plan runs over.
+                Required for a temporal twin, refused for a static one.
+            environments: Panel twins: which environments to optimize over.
+            variable_constraints: Bounds on how far each variable may move.
+            metric_constraints: Guardrails every plan must respect.
+            max_changes: Cap on how many variables a single plan may change.
+            timeout: Seconds to wait for the run.
+
+        Returns:
+            A [`SimulationResult`](#simulationresult).
+
+        Raises:
+            RootCauseError: No objectives or no decision variables, an objective
+                that is not a `rc.objective()` payload, a horizon that this twin
+                kind does not take (or a temporal twin given none), or
+                `environments` on a twin that is not a panel twin.
+
+        Examples:
+            >>> churn = rc.objective(
+            ...     "Churn share",
+            ...     "SELECT AVG(CASE WHEN Churn = 'Yes' THEN 1.0 ELSE 0.0 END) AS value FROM df",
+            ...     "minimise",
+            ... )
+            >>> twin.optimise([churn], decision_vars=["Contract", "MonthlyCharges"])
+        """
+        scenario = self._optimisation_scenario(
+            objectives, decision_vars, horizon, environments,
+            variable_constraints, metric_constraints, max_changes,
+        )
+        return self._run_scenario(scenario, timeout=timeout)
+
+    def root_cause(
+        self,
+        target: str,
+        samples: "pd.DataFrame | list[dict[str, Any]] | dict[str, list[dict[str, Any]]]",
+        environments: list[str] | None = None,
+        timestep: int | None = None,
+        target_fpr: float = 0.005,
+        *,
+        timeout: float = 3600.0,
+    ) -> SimulationResult:
+        """Diagnose one variable: trace it upstream to what actually broke it.
+
+        Use this when you already know which variable is misbehaving. To find
+        out whether anything is, scan every variable with `anomalies()`.
+
+        Args:
+            target: The variable behaving unexpectedly.
+            samples: The observations to diagnose, as a DataFrame, a list of
+                dicts, or, on a panel twin, a `{environment: rows}` mapping. A
+                flat list on a panel twin is shared across its environments.
+            environments: Panel twins: which environments to diagnose.
+            timestep: Temporal twins: the step to diagnose. Defaults to the
+                one the scan flags.
+            target_fpr: Detection sensitivity, as a false-positive rate between
+                0.0001 and 0.1. Lower flags less.
+            timeout: Seconds to wait for the run.
+
+        Returns:
+            A [`SimulationResult`](#simulationresult).
+
+        Raises:
+            RootCauseError: No target, `environments` or per-environment samples
+                on a twin that is not a panel twin, or `timestep` on a twin with
+                no time axis.
+
+        Examples:
+            >>> twin.root_cause("Churn", observed_frame)
+        """
+        scenario = self._root_cause_scenario(target, samples, environments, timestep, target_fpr)
+        return self._run_scenario(scenario, timeout=timeout)
+
+    def anomalies(
+        self,
+        samples: "pd.DataFrame | list[dict[str, Any]] | dict[str, list[dict[str, Any]]]",
+        environments: list[str] | None = None,
+        start_step: int | None = None,
+        end_step: int | None = None,
+        target_fpr: float = 0.005,
+        *,
+        timeout: float = 3600.0,
+    ) -> SimulationResult:
+        """Scan every variable for causal anomalies, and diagnose what it finds.
+
+        The counterpart to `root_cause()`: this one asks whether anything is
+        broken rather than why a named variable is.
+
+        Args:
+            samples: The observations to scan, as a DataFrame, a list of dicts,
+                or, on a panel twin, a `{environment: rows}` mapping. A flat
+                list on a panel twin is shared across its environments.
+            environments: Panel twins: which environments to scan.
+            start_step: Temporal twins: first step of the window to scan.
+            end_step: Temporal twins: last step of the window to scan.
+            target_fpr: Detection sensitivity, as a false-positive rate between
+                0.0001 and 0.1. Lower flags less.
+            timeout: Seconds to wait for the run.
+
+        Returns:
+            A [`SimulationResult`](#simulationresult).
+
+        Raises:
+            RootCauseError: `environments` or per-environment samples on a twin
+                that is not a panel twin, or a step window on a twin with no
+                time axis.
+
+        Examples:
+            >>> twin.anomalies(observed_frame)
+        """
+        scenario = self._anomaly_scenario(samples, environments, start_step, end_step, target_fpr)
+        return self._run_scenario(scenario, timeout=timeout)
+
     def _intervention_scenario(
         self,
         do: dict[str, Any],
@@ -630,6 +869,192 @@ class Twin:
             scenario["environments"] = environments
             scenario["aggregateMode"] = aggregate
         return scenario
+
+    def _prediction_scenario(
+        self,
+        sample: Any,
+        targets: list[str] | None,
+        confidence: float,
+    ) -> dict[str, Any]:
+        if self.kind not in PREDICT_KINDS:
+            raise RootCauseError(
+                f'"{self.name}" is a {self.kind} twin; prediction reads one row at a time and needs a '
+                "static twin. Use forecast() to project a temporal twin forward."
+            )
+        return {
+            "type": "prediction",
+            "sample": _guard.records(sample, "sample"),
+            "targetVars": targets or self._infer_targets(),
+            "confidenceLevel": _guard.probability(confidence, "confidence"),
+        }
+
+    def _explanation_scenario(
+        self,
+        cause: str | None,
+        effect: str | None,
+        mode: str | None,
+        environments: list[str] | None,
+    ) -> dict[str, Any]:
+        if mode is None:
+            mode = "directional" if cause and effect else "impact" if cause else "discovery" if effect else None
+        if mode is None:
+            raise RootCauseError(
+                "An explanation needs a variable to explain: pass effect= for what drives a variable, "
+                "cause= for what a variable goes on to affect, or both to explain the paths between them."
+            )
+        _guard.choice(mode, "mode", EXPLANATION_MODES)
+        if mode in {"directional", "impact"} and not cause:
+            raise RootCauseError(f'mode="{mode}" needs cause=: the variable whose downstream effects are explained')
+        if mode in {"directional", "discovery"} and not effect:
+            raise RootCauseError(f'mode="{mode}" needs effect=: the variable whose upstream causes are explained')
+        self._reject_environments(environments)
+        scenario: dict[str, Any] = {
+            "type": self._scenario_type(EXPLANATION_TYPES, "explanation"),
+            "explanationMode": mode,
+            "causeVariable": cause,
+            "effectVariable": effect,
+        }
+        if self.is_panel:
+            scenario["environments"] = environments
+        return scenario
+
+    def _optimisation_scenario(
+        self,
+        objectives: list[dict[str, Any]],
+        decision_vars: list[str],
+        horizon: int | None,
+        environments: list[str] | None,
+        variable_constraints: list[dict[str, Any]] | None,
+        metric_constraints: list[dict[str, Any]] | None,
+        max_changes: int | None,
+    ) -> dict[str, Any]:
+        if not objectives:
+            raise RootCauseError(
+                "Optimization needs at least one objective: "
+                "objectives=[rc.objective('Revenue', 'SELECT SUM(revenue) AS value FROM df')]"
+            )
+        for objective in objectives:
+            if not isinstance(objective, dict) or not objective.get("variable") or not objective.get("metricSqlQuery"):
+                raise RootCauseError(
+                    "Every objective needs a name and the SQL that measures it; build them with "
+                    f"rc.objective(...). Got: {objective!r}"
+                )
+        if not decision_vars:
+            raise RootCauseError(
+                "Optimization needs at least one decision variable: the levers it is allowed to change."
+            )
+        self._reject_environments(environments)
+        scenario_type = self._scenario_type(OPTIMISATION_TYPES, "optimization")
+        scenario: dict[str, Any] = {
+            "type": scenario_type,
+            "objectives": objectives,
+            "decisionVars": list(decision_vars),
+        }
+        if horizon is not None:
+            if not self.is_temporal:
+                raise RootCauseError(
+                    f'horizon= only applies to temporal twins; "{self.name}" is {self.kind} and optimizes '
+                    "a single period"
+                )
+            scenario["forecastHorizon"] = _guard.positive(horizon, "horizon")
+        elif scenario_type == "temporal_optimisation":
+            raise RootCauseError("A temporal optimization needs horizon=: how many steps ahead the plan runs over")
+        if variable_constraints:
+            scenario["variableConstraints"] = variable_constraints
+        if metric_constraints:
+            scenario["metricConstraints"] = metric_constraints
+        if max_changes is not None:
+            scenario["interventionCountConfig"] = {"maxInterventions": _guard.positive(max_changes, "max_changes")}
+        if self.is_panel:
+            scenario["environments"] = environments
+        return scenario
+
+    def _root_cause_scenario(
+        self,
+        target: str,
+        samples: Any,
+        environments: list[str] | None,
+        timestep: int | None,
+        target_fpr: float,
+    ) -> dict[str, Any]:
+        if not target:
+            raise RootCauseError("root_cause() needs target=: the variable behaving unexpectedly")
+        self._reject_environments(environments)
+        scenario: dict[str, Any] = {
+            "type": self._scenario_type(ROOT_CAUSE_TYPES, "root cause analysis"),
+            "targetVariable": target,
+            "targetFpr": _guard.bounded(target_fpr, "target_fpr", 0.0001, 0.1),
+            **self._scenario_samples(samples),
+        }
+        if timestep is not None:
+            if not self.is_temporal:
+                raise RootCauseError(
+                    f'timestep= only applies to temporal twins; "{self.name}" is {self.kind} and its rows '
+                    "carry no time axis"
+                )
+            scenario["anomalyTimestep"] = timestep
+        if self.is_panel:
+            scenario["environments"] = environments
+        return scenario
+
+    def _anomaly_scenario(
+        self,
+        samples: Any,
+        environments: list[str] | None,
+        start_step: int | None,
+        end_step: int | None,
+        target_fpr: float,
+    ) -> dict[str, Any]:
+        self._reject_environments(environments)
+        scenario: dict[str, Any] = {
+            "type": self._scenario_type(ANOMALY_TYPES, "anomaly detection"),
+            "targetFpr": _guard.bounded(target_fpr, "target_fpr", 0.0001, 0.1),
+            **self._scenario_samples(samples),
+        }
+        if (start_step is not None or end_step is not None) and not self.is_temporal:
+            raise RootCauseError(
+                f'start_step= and end_step= only apply to temporal twins; "{self.name}" is {self.kind} and '
+                "its rows carry no time axis"
+            )
+        if start_step is not None:
+            scenario["startStep"] = start_step
+        if end_step is not None:
+            scenario["endStep"] = end_step
+        if self.is_panel:
+            scenario["environments"] = environments
+        return scenario
+
+    def _scenario_type(self, types: dict[str, str], family: str) -> str:
+        """The name this twin's kind gives one scenario family."""
+        scenario_type = types.get(self.kind)
+        if scenario_type is None:
+            raise RootCauseError(
+                f'"{self.name}" reports kind "{self.kind}", which this SDK has no {family} scenario for; '
+                f"known kinds are {', '.join(sorted(types))}"
+            )
+        return scenario_type
+
+    def _reject_environments(self, environments: list[str] | None) -> None:
+        if environments is not None and not self.is_panel:
+            raise RootCauseError(f'environments= only applies to panel twins; "{self.name}" is {self.kind}')
+
+    def _scenario_samples(self, samples: Any, argument: str = "samples") -> dict[str, Any]:
+        """Rows shared across the twin, or one set of rows per environment."""
+        if isinstance(samples, dict):
+            if not self.is_panel:
+                raise RootCauseError(
+                    f'{argument}= as a {{environment: rows}} mapping only applies to panel twins; '
+                    f'"{self.name}" is {self.kind}, so pass one flat list of rows'
+                )
+            if not samples:
+                raise InvalidArgumentError(f"{argument}= names no environments; there is nothing to diagnose")
+            return {
+                "panelSamples": {
+                    str(environment): _guard.records(rows, f"{argument}[{environment!r}]")
+                    for environment, rows in samples.items()
+                }
+            }
+        return {"samples": _guard.records(samples, argument)}
 
     def ask(self, query: str, *, timeout: float = 3600.0) -> SimulationResult:
         """Natural-language question, turned into a scenario and executed.

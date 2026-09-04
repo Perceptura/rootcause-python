@@ -50,6 +50,17 @@ def frame(value: Any, argument: str = "frame") -> "pd.DataFrame":
     return value
 
 
+def records(value: Any, argument: str) -> list[dict[str, Any]]:
+    """Accept a DataFrame or a non-empty list of dicts, as one list of dicts."""
+    if hasattr(value, "to_dict"):
+        return frame(value, argument).to_dict(orient="records")
+    if not isinstance(value, list) or not value:
+        raise InvalidArgumentError(f"{argument}= must be a DataFrame or a non-empty list of dicts")
+    if not all(isinstance(row, dict) for row in value):
+        raise InvalidArgumentError(f"{argument}= as a list must hold dicts keyed by twin variable name")
+    return value
+
+
 def positive(value: Any, argument: str) -> int:
     """Accept a positive integer, or say what would have gone to the engine."""
     try:
@@ -69,6 +80,19 @@ def probability(value: Any, argument: str) -> float:
         raise InvalidArgumentError(f"{argument}= must be a number between 0 and 1, not {value!r}") from None
     if not 0.0 < number < 1.0:
         raise InvalidArgumentError(f"{argument}= must be between 0 and 1 (exclusive), not {number}")
+    return number
+
+
+def bounded(value: Any, argument: str, low: float, high: float) -> float:
+    """Accept a number inside an inclusive range."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise InvalidArgumentError(
+            f"{argument}= must be a number between {low} and {high}, not {value!r}"
+        ) from None
+    if not low <= number <= high:
+        raise InvalidArgumentError(f"{argument}= must be between {low} and {high}, not {number}")
     return number
 
 

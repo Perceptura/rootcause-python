@@ -177,6 +177,64 @@ def metric(name: str, sql: str, unit: str = "count", higher_is_better: bool = Tr
     return {"name": name, "sqlQuery": sql, "unit": unit, "higherIsBetter": higher_is_better}
 
 
+_DIRECTIONS = {"maximise": "maximise", "maximize": "maximise", "minimise": "minimise", "minimize": "minimise"}
+
+
+def objective(
+    name: str,
+    sql: str,
+    direction: str = "maximise",
+    unit: str | None = None,
+    weight: float | None = None,
+) -> dict[str, Any]:
+    """An optimisation objective: what to move, which way, measured by SQL.
+
+    Args:
+        name: Label for the objective, as it appears on the result. It names
+            the metric, not a variable in the causal graph.
+        sql: SQL over the sampled frame, which is registered as `df`, `data`,
+            and `dataset`.
+        direction: `maximise` or `minimise`. Both spellings are accepted.
+        unit: Unit label for the objective's value.
+        weight: Relative weight against the other objectives. Defaults to 1.
+
+    Raises:
+        InvalidArgumentError: The name is blank, the SQL is not a SELECT, or
+            the direction is neither maximise nor minimise.
+
+    Examples:
+        >>> rc.objective("Total revenue", "SELECT SUM(revenue) AS value FROM df")
+
+        A categorical outcome has to be counted rather than averaged: `AVG` over
+        a text column is not a number, and the run fails in the engine.
+
+        >>> rc.objective(
+        ...     "Churn share",
+        ...     "SELECT AVG(CASE WHEN churn = 'Yes' THEN 1.0 ELSE 0.0 END) AS value FROM df",
+        ...     "minimise",
+        ... )
+    """
+    if not str(name).strip():
+        raise InvalidArgumentError("An objective needs a name")
+    if "select" not in str(sql).lower():
+        raise InvalidArgumentError(
+            f"an objective's sql must be a SELECT over the sampled frame, for example "
+            f"'SELECT AVG(\"{name}\") AS value FROM df'; got: {sql!r}"
+        )
+    if str(direction).lower() not in _DIRECTIONS:
+        raise InvalidArgumentError(f'direction="{direction}" must be either maximise or minimise')
+    spec: dict[str, Any] = {
+        "direction": _DIRECTIONS[str(direction).lower()],
+        "variable": name,
+        "metricSqlQuery": sql,
+    }
+    if unit is not None:
+        spec["unit"] = unit
+    if weight is not None:
+        spec["weight"] = _number(weight, "weight")
+    return spec
+
+
 def mean_metrics(outcomes: list[str]) -> list[dict[str, Any]]:
     """Mean-of-column metrics for each outcome variable, the common case.
 
