@@ -12,7 +12,13 @@ import pytest
 import rootcause as rc
 from rootcause.errors import InvalidArgumentError, RootCauseError
 from rootcause.results import PredictionResult, SimulationResult
-from rootcause.twin import Twin
+from rootcause.twin import (
+    ANOMALY_TYPES,
+    EXPLANATION_TYPES,
+    OPTIMISATION_TYPES,
+    ROOT_CAUSE_TYPES,
+    Twin,
+)
 
 KINDS = ["static", "temporal", "multi-environment-static", "multi-environment-temporal"]
 
@@ -419,9 +425,7 @@ def test_an_empty_environment_mapping_is_refused(api, transport):
     assert api.requests == []
 
 
-def test_every_kind_has_a_name_for_every_family(transport):
-    from rootcause.twin import ANOMALY_TYPES, EXPLANATION_TYPES, OPTIMISATION_TYPES, ROOT_CAUSE_TYPES
-
+def test_every_kind_has_a_name_for_every_family():
     for family in (EXPLANATION_TYPES, OPTIMISATION_TYPES, ROOT_CAUSE_TYPES, ANOMALY_TYPES):
         assert sorted(family) == sorted(KINDS)
 

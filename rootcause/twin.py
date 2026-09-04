@@ -1613,6 +1613,68 @@ class EnvSubset:
             timeout=timeout,
         )
 
+    def explain(
+        self,
+        cause: str | None = None,
+        effect: str | None = None,
+        mode: str | None = None,
+        *,
+        timeout: float = 3600.0,
+    ) -> SimulationResult:
+        return self.twin.explain(
+            cause=cause, effect=effect, mode=mode, environments=self._names(), timeout=timeout
+        )
+
+    def optimise(
+        self,
+        objectives: list[dict[str, Any]],
+        decision_vars: list[str],
+        horizon: int | None = None,
+        variable_constraints: list[dict[str, Any]] | None = None,
+        metric_constraints: list[dict[str, Any]] | None = None,
+        max_changes: int | None = None,
+        *,
+        timeout: float = 3600.0,
+    ) -> SimulationResult:
+        return self.twin.optimise(
+            objectives,
+            decision_vars,
+            horizon=horizon,
+            environments=self._names(),
+            variable_constraints=variable_constraints,
+            metric_constraints=metric_constraints,
+            max_changes=max_changes,
+            timeout=timeout,
+        )
+
+    def root_cause(
+        self,
+        target: str,
+        samples: "pd.DataFrame | list[dict[str, Any]] | dict[str, list[dict[str, Any]]]",
+        timestep: int | None = None,
+        target_fpr: float = 0.005,
+        *,
+        timeout: float = 3600.0,
+    ) -> SimulationResult:
+        return self.twin.root_cause(
+            target, samples, environments=self._names(), timestep=timestep,
+            target_fpr=target_fpr, timeout=timeout,
+        )
+
+    def anomalies(
+        self,
+        samples: "pd.DataFrame | list[dict[str, Any]] | dict[str, list[dict[str, Any]]]",
+        start_step: int | None = None,
+        end_step: int | None = None,
+        target_fpr: float = 0.005,
+        *,
+        timeout: float = 3600.0,
+    ) -> SimulationResult:
+        return self.twin.anomalies(
+            samples, environments=self._names(), start_step=start_step, end_step=end_step,
+            target_fpr=target_fpr, timeout=timeout,
+        )
+
     def __repr__(self) -> str:
         if self._stat_filters is not None:
             if self._resolved is not None:
@@ -1813,6 +1875,58 @@ class Group(EnvSubset):
         return ForecastResult(
             self.twin._transport, self.twin._workspace_id, result.run_id, result.run, scenario
         )
+
+    def explain(
+        self,
+        cause: str | None = None,
+        effect: str | None = None,
+        mode: str | None = None,
+        *,
+        timeout: float = 3600.0,
+    ) -> SimulationResult:
+        scenario = self.twin._explanation_scenario(cause, effect, mode, None)
+        return self.twin._run_scenario(scenario, timeout=timeout, environment_group_ids=[self.id])
+
+    def optimise(
+        self,
+        objectives: list[dict[str, Any]],
+        decision_vars: list[str],
+        horizon: int | None = None,
+        variable_constraints: list[dict[str, Any]] | None = None,
+        metric_constraints: list[dict[str, Any]] | None = None,
+        max_changes: int | None = None,
+        *,
+        timeout: float = 3600.0,
+    ) -> SimulationResult:
+        scenario = self.twin._optimisation_scenario(
+            objectives, decision_vars, horizon, None,
+            variable_constraints, metric_constraints, max_changes,
+        )
+        return self.twin._run_scenario(scenario, timeout=timeout, environment_group_ids=[self.id])
+
+    def root_cause(
+        self,
+        target: str,
+        samples: "pd.DataFrame | list[dict[str, Any]] | dict[str, list[dict[str, Any]]]",
+        timestep: int | None = None,
+        target_fpr: float = 0.005,
+        *,
+        timeout: float = 3600.0,
+    ) -> SimulationResult:
+        scenario = self.twin._root_cause_scenario(target, samples, None, timestep, target_fpr)
+        return self.twin._run_scenario(scenario, timeout=timeout, environment_group_ids=[self.id])
+
+    def anomalies(
+        self,
+        samples: "pd.DataFrame | list[dict[str, Any]] | dict[str, list[dict[str, Any]]]",
+        start_step: int | None = None,
+        end_step: int | None = None,
+        target_fpr: float = 0.005,
+        *,
+        timeout: float = 3600.0,
+    ) -> SimulationResult:
+        scenario = self.twin._anomaly_scenario(samples, None, start_step, end_step, target_fpr)
+        return self.twin._run_scenario(scenario, timeout=timeout, environment_group_ids=[self.id])
 
     def link(self) -> "Any":
         """The parent twin's page on the platform, as a clickable URL."""

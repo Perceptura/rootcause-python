@@ -99,6 +99,20 @@ Resolve a workspace by name, and everything in it answers by name too. Collectio
 >>> fc.to_frame()                           # tidy long format, straight into pandas
 ```
 
+A trained twin has a verb for every question the platform's New Simulation wizard asks, and each one blocks until the run finishes:
+
+```python
+>>> twin.predict(rows, targets=["Churn"])   # what will this specific case do?
+>>> twin.forecast(horizon=24)               # what happens over time?
+>>> twin.intervene({"price": rc.pct(-10)}, outcomes=["revenue"])   # what if we change X?
+>>> twin.explain(effect="Churn")            # why does this happen?
+>>> twin.optimise([objective], decision_vars=["price"])            # what should we change?
+>>> twin.root_cause("Churn", observed)      # why is this variable broken?
+>>> twin.anomalies(observed)                # is anything broken at all?
+```
+
+Which verbs a twin accepts depends on its kind, and the SDK refuses the wrong one before it submits anything rather than letting the platform answer with a 422. [Working with Digital Twins](sdk-working-with-twins.md#asking-a-trained-twin-a-question) has the table and a worked example of each.
+
 Everything tabular answers `to_frame()`. Everything long-running blocks with a progress line and raises a typed error if the job fails, so a notebook cell either completes or tells you why.
 
 ## Jumping to the platform
@@ -117,7 +131,7 @@ Workspaces, sources, datasets, twins, the ontology, and simulation/forecast/scor
 
 ## Next steps
 
-* [Working with Digital Twins](sdk-working-with-twins.md): training, raw sampling, interventions, portable twins
+* [Working with Digital Twins](sdk-working-with-twins.md): training, a verb per simulation family, raw sampling, portable twins
 * [Temporal and Panel Twins](sdk-temporal-and-panel-twins.md): time series, environments, forecasts with attribution
 * [Ontology Queries](sdk-ontology-queries.md): the semantic layer from Python
 * [Interactive Apps in Notebooks](sdk-notebook-apps.md): the consoles Claude renders, under your cells

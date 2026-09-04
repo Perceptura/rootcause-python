@@ -86,6 +86,8 @@ Twin('Store weeks', kind=static, version=Z08TxdUFFQPTWlvNSQH2r, state=trained)
 0  avg_revenue  517.44498    537.604876
 ```
 
+`intervene` is one of eight verbs a trained twin answers: `predict` for a specific case, `explain` for why, `optimise` for what to change, `root_cause` and `anomalies` for diagnosis. [Asking a trained twin a question](sdk-working-with-twins.md#asking-a-trained-twin-a-question) covers them all.
+
 The loop from here is the same as any other source: re-import or sync on a schedule, `twin.update()` to fold new rows in ([Working with Digital Twins](sdk-working-with-twins.md#keeping-a-trained-model-current)), and [Temporal and Panel Twins](sdk-temporal-and-panel-twins.md) for time series and per-environment modelling.
 
 Over REST, the same loop is `POST /connectors` → `POST /connectors/{id}/preview-query` → `POST /connectors/{id}/import` — see the [REST API Reference](../api-and-integrations/rest-api-reference/).

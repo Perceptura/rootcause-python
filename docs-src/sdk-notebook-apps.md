@@ -20,6 +20,7 @@ The result objects mount their app on their own: display one — as the last exp
 >>> twin.graph                                        # the causal-graph console
 >>> result = twin.intervene({"Contract": rc.set("Two year")})
 >>> result                                            # the What-If Studio, over this run
+>>> twin.explain(effect="Churn")                      # the explanation, as its own app
 >>> sweep_run.sweep()                                 # the dose-response curve
 >>> twin.env("berlin")                                # the environment listing
 ```
@@ -30,7 +31,7 @@ Three rules keep this honest:
 * **Displaying never raises.** No `jupyter` extra, an older platform, a fetch that fails — the object falls back to the same static HTML repr it always had.
 * **There is a kill switch.** `rc.auto_apps(False)` (or `ROOTCAUSE_AUTO_APPS=0`) turns every display back into the static repr — the right setting for headless notebook executors and exported documents.
 
-`SimulationResult` and `ForecastResult` mount the What-If Studio over their stored run, so the dials and Run exact are live on a scenario you ran minutes or months ago. `ScoreResult` mounts the scoring register over the digest it already holds. `Graph` mounts the twin console, sweeps mount the curve explorer, and a panel twin's environment subsets mount the environment listing.
+Every run result mounts by run id, so the platform decides which app fits the family that ran: `SimulationResult`, `ForecastResult` and `PredictionResult` all reach the same readback, and an intervention arrives as the What-If Studio with the dials and Run exact live on a scenario you ran minutes or months ago, while an explanation or a diagnosis arrives as its own view of that run. `ScoreResult` mounts the scoring register over the digest it already holds. `Graph` mounts the twin console, sweeps mount the curve explorer, and a panel twin's environment subsets mount the environment listing.
 
 <figure><img src="../.gitbook/assets/sdk-auto-display-studio.png" alt="A cell reading result = twin.intervene({&#x22;tenure&#x22;: rc.set(60)}, outcomes=[&#x22;TotalCharges&#x22;, &#x22;MonthlyCharges&#x22;]) followed by result on its own line. Under it, the What-if studio renders the completed run: a tenure slider set to 60, KPI cards reading avg_TotalCharges 2.1k to 4.2k (+97.6 percent, statistically significant) and avg_MonthlyCharges no change, a bar chart against the dashed baseline, the narration Setting tenure to 60 moves avg_TotalCharges +2.1k, and the opening scenario pinned below."><figcaption>Display the result and the studio mounts over the run you already paid for — no re-simulation, dials live.</figcaption></figure>
 

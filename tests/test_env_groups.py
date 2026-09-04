@@ -426,3 +426,67 @@ def test_group_link_points_at_the_twin(api, transport):
     link = Group(_twin(transport), dict(EU_GROUP)).link()
 
     assert str(link) == "https://fake.rootcause.test/org1/space/ws1/twins/tw1?version=1.0.0"
+
+
+@pytest.mark.parametrize(
+    ("call", "expected_type"),
+    [
+        (lambda h: h.explain(effect="revenue"), "panel_explanation"),
+        (
+            lambda h: h.optimise(
+                [{"direction": "maximise", "variable": "Revenue", "metricSqlQuery": "SELECT SUM(revenue) AS value FROM df"}],
+                decision_vars=["price"],
+            ),
+            "panel_optimisation",
+        ),
+        (lambda h: h.root_cause("revenue", [{"revenue": 10}]), "panel_root_cause_analysis"),
+        (lambda h: h.anomalies([{"revenue": 10}]), "panel_anomaly_detection"),
+    ],
+)
+def test_group_scopes_every_family_by_group_id(api, transport, call, expected_type):
+    api.on("POST", f"/api/v1/workspaces/{WS}/simulations", {"data": {"runId": "r1"}})
+    api.on("GET", f"/api/v1/workspaces/{WS}/simulations/r1", {"data": {"status": "completed"}})
+
+    result = call(Group(_twin(transport), dict(EU_GROUP)))
+
+    body = api.body_of("POST", "/simulations")
+    assert isinstance(result, SimulationResult)
+    assert body["scenario"]["type"] == expected_type
+    # The group is named, never expanded: that is what freezes the snapshot on
+    # the run, so a later edit to the group cannot rewrite what it covered.
+    assert body["environmentGroupIds"] == ["grp-eu"]
+    assert body["scenario"]["environments"] is None
+    assert not _paths(api, "/environment-groups/resolve")
+
+
+@pytest.mark.parametrize(
+    ("call", "expected_type"),
+    [
+        (lambda h: h.explain(cause="price", effect="revenue"), "panel_explanation"),
+        (lambda h: h.root_cause("revenue", [{"revenue": 10}]), "panel_root_cause_analysis"),
+        (lambda h: h.anomalies([{"revenue": 10}]), "panel_anomaly_detection"),
+    ],
+)
+def test_temp_subsets_scope_every_family_by_environment_name(api, transport, call, expected_type):
+    api.on("GET", f"{VERSION_PATH}/environments", ENV_LISTING)
+    api.on("POST", f"/api/v1/workspaces/{WS}/simulations", {"data": {"runId": "r1"}})
+    api.on("GET", f"/api/v1/workspaces/{WS}/simulations/r1", {"data": {"status": "completed"}})
+
+    call(_twin(transport).env("london", "berlin"))
+
+    body = api.body_of("POST", "/simulations")
+    assert body["scenario"]["type"] == expected_type
+    assert body["scenario"]["environments"] == ["london", "berlin"]
+    assert "environmentGroupIds" not in body
+
+
+def test_a_subset_passes_per_environment_samples_through(api, transport):
+    api.on("GET", f"{VERSION_PATH}/environments", ENV_LISTING)
+    api.on("POST", f"/api/v1/workspaces/{WS}/simulations", {"data": {"runId": "r1"}})
+    api.on("GET", f"/api/v1/workspaces/{WS}/simulations/r1", {"data": {"status": "completed"}})
+
+    _twin(transport).env("london", "berlin").anomalies({"london": [{"revenue": 1}], "berlin": [{"revenue": 2}]})
+
+    scenario = api.body_of("POST", "/simulations")["scenario"]
+    assert scenario["panelSamples"] == {"london": [{"revenue": 1}], "berlin": [{"revenue": 2}]}
+    assert scenario["environments"] == ["london", "berlin"]

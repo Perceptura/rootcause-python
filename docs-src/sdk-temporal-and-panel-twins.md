@@ -8,7 +8,7 @@ Time series and multi-environment data get their own twin kinds with their own m
 | `multi-environment-static` | `entity=` | the same system observed across environments |
 | `multi-environment-temporal` | `time=` + `entity=` | a panel: many environments, each a time series |
 
-Everything from [Working with Digital Twins](sdk-working-with-twins.md) applies unchanged; this page covers what these kinds add.
+Everything from [Working with Digital Twins](sdk-working-with-twins.md) applies unchanged; this page covers what these kinds add, including the names the other simulation families take here and the two arguments that only exist because there is a time axis.
 
 ## A panel in long format
 
@@ -207,6 +207,63 @@ Group('Eurozone', id=VSaJCq7nDtRfXbW2hLpKy)
 
 Because the rule outlives the data it was written against, a group can stop fitting. Two outcomes, and they are not the same thing: a group that resolves cleanly and matches nothing is empty — the rule is fine, the environments moved on — while a group naming a column this version does not have raises with the reason it cannot be evaluated at all.
 
+## The other families, on a temporal or panel twin
+
+Forecasting and scheduled interventions are what these kinds are usually reached for, but the rest of the simulation families work here too, under names of their own. The SDK picks the name from the twin's kind, so the call is the same one you would write against a static twin:
+
+| Verb | static | temporal | multi-environment static | multi-environment temporal |
+| --- | --- | --- | --- | --- |
+| `predict` | `prediction` | not available | `prediction` | not available |
+| `forecast` | not available | `forecast` | not available | `panel_forecast` |
+| `explain` | `explanation` | `temporal_explanation` | `panel_explanation` | `panel_explanation` |
+| `optimise` | `optimisation` | `temporal_optimisation` | `panel_optimisation` | `panel_optimisation` |
+| `root_cause` | `root_cause_analysis` | `temporal_root_cause_analysis` | `static_panel_root_cause_analysis` | `panel_root_cause_analysis` |
+| `anomalies` | `anomaly_detection` | `temporal_anomaly_detection` | `static_panel_anomaly_detection` | `panel_anomaly_detection` |
+
+**Prediction is the one that does not carry over.** It answers for a row of inputs, which a series does not have; a temporal twin projects forward with `forecast` instead, and says so rather than guessing:
+
+```python
+>>> twin.predict([{"price": 12.0}], targets=["revenue"])
+RootCauseError: "Stores" is a multi-environment-temporal twin; prediction reads one row
+at a time and needs a static twin. Use forecast() to project a temporal twin forward.
+```
+
+A multi-environment **static** panel is the exception: it has rows, so it predicts, and the scenario is plain `prediction` with no panel variant.
+
+Three arguments only exist because there is a time axis, and passing one to a static twin is refused rather than dropped:
+
+```python
+>>> twin.optimise([objective], decision_vars=["price"], horizon=12)
+>>> twin.root_cause("revenue", observed, timestep=17)
+>>> twin.anomalies(observed, start_step=4, end_step=9)
+```
+
+`horizon` is **required** for a temporal optimization, which plans across steps rather than picking one setting; it is optional on a panel and refused on a static twin.
+
+### Diagnosing environments
+
+`root_cause` and `anomalies` need the observations you want diagnosed. On a panel twin you can either share one set of rows across every environment, by passing a flat list, or give each environment its own by passing a mapping:
+
+```python
+>>> twin.anomalies(observed)                                    # the same rows, everywhere
+>>> twin.anomalies({"london": london_rows, "berlin": berlin_rows})
+```
+
+The mapping becomes `panelSamples` on the scenario, keyed by environment. A flat list becomes `samples`, which the engine shares across the environments in scope.
+
+### Every family is scoped by a subset or a group
+
+The environment handles from the two sections above carry the whole verb set, not just `sample`, `intervene` and `forecast`. A subset pins the environments by name; a saved group is sent by id, so the platform still freezes onto the run exactly what the group resolved to:
+
+```python
+>>> twin.env("london", "berlin").explain(effect="revenue")
+>>> eu = twin.group("EU stores")
+>>> eu.anomalies(observed)
+>>> eu.optimise([objective], decision_vars=["price"], horizon=6)
+>>> _.environment_groups
+[{'id': 'VSaJCq7nDtRfXbW2hLpKy', 'name': 'EU stores', 'envKeys': ['london', 'berlin'], 'droppedEnvKeys': []}]
+```
+
 ## Monthly refresh: assimilate instead of retrain
 
 When next month's rows arrive, the model doesn't need rebuilding. Extend the twin's source with the new rows and fold them into the fitted model with `update()` — seconds, not a training run. It finishes with a status, never an error: `committed` (rows folded in), `up_to_date` (nothing new), or `retrain_required` (the model can't take these rows incrementally — `result.reasons` says why; call `twin.retrain()`).
@@ -252,4 +309,4 @@ Download the temporal and panel notebook
 ## Next steps
 
 - [Interactive Apps in Notebooks](sdk-notebook-apps.md): the twin console works on panel twins too
-- [Python API Reference](sdk-api-reference.md): full signatures for sample, intervene, forecast
+- [Python API Reference](sdk-api-reference.md): full signatures for every verb on `Twin`, `EnvSubset` and `Group`
