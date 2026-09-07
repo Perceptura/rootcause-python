@@ -158,7 +158,7 @@ RESOLVED = {"data": {
 def test_env_where_compiles_tuples_and_resolves_server_side(api, transport):
     api.on("POST", f"/api/v1/workspaces/{WS}/digital-twins/tw1/versions/v1/environments/resolve", RESOLVED)
 
-    subset = _twin(transport).env(where=[("revenue", "avg", ">", 400), ("region", "==", "EMEA")])
+    subset = _twin(transport).env(where=[("revenue", "mean", ">", 400), ("region", "==", "EMEA")])
     frame = subset.environments
 
     body = api.body_of("POST", "/environments/resolve")
@@ -176,7 +176,7 @@ def test_env_where_scopes_simulations_to_the_matches(api, transport):
     api.on("POST", f"/api/v1/workspaces/{WS}/simulations", {"data": {"runId": "r1"}})
     api.on("GET", f"/api/v1/workspaces/{WS}/simulations/r1", {"data": {"status": "completed"}})
 
-    _twin(transport).env(where=[("revenue", "avg", ">", 400)]).intervene(
+    _twin(transport).env(where=[("revenue", "mean", ">", 400)]).intervene(
         {"price": {"type": "percentage", "value": -10}}, outcomes=["revenue"])
 
     body = api.body_of("POST", "/simulations")
@@ -188,7 +188,7 @@ def test_env_where_feeds_the_graph_slice_with_resolved_combos(api, transport):
     api.on("POST", f"/api/v1/workspaces/{WS}/digital-twins/tw1/versions/v1/graph/slice",
            {"data": {"causalGraph": [], "nodes": [], "envCount": 2}})
 
-    _twin(transport).env(where=[("revenue", "avg", ">", 400)]).graph
+    _twin(transport).env(where=[("revenue", "mean", ">", 400)]).graph
 
     body = api.body_of("POST", "/graph/slice")
     assert body["mode"] == "environments"
@@ -197,7 +197,7 @@ def test_env_where_feeds_the_graph_slice_with_resolved_combos(api, transport):
 
 def test_env_rejects_names_and_where_together(api, transport):
     with pytest.raises(RootCauseError):
-        _twin(transport).env("london", where=[("revenue", "avg", ">", 400)])
+        _twin(transport).env("london", where=[("revenue", "mean", ">", 400)])
 
 
 def test_env_where_rejects_malformed_tuples(api, transport):
@@ -206,7 +206,17 @@ def test_env_where_rejects_malformed_tuples(api, transport):
     with pytest.raises(RootCauseError):
         _twin(transport).env(where=[("revenue", "median", ">", 400)])
     with pytest.raises(RootCauseError):
-        _twin(transport).env(where=[("revenue", "avg", "~=", 400)])
+        _twin(transport).env(where=[("revenue", "mean", "~=", 400)])
+
+
+def test_env_where_names_the_replacement_for_the_removed_avg_reduce(api, transport):
+    # `avg` used to be a client-side alias translated to `mean` before the request.
+    # It is gone, so the error has to say what to write instead -- a bare "unknown
+    # reduce" would read as though the aggregate were unsupported.
+    with pytest.raises(RootCauseError) as exc:
+        _twin(transport).env(where=[("revenue", "avg", ">", 400)])
+    assert 'reduce "avg" was removed' in str(exc.value)
+    assert '"mean"' in str(exc.value)
 
 
 def test_named_subset_environments_frame(api, transport):

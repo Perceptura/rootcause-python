@@ -167,7 +167,7 @@ Group('EU stores', id=VSaJCq7nDtRfXbW2hLpKy)
 What gets stored is the rule, not the answer. Naming environments stores the exact combos; a `where=` subset stores the filter, so it re-selects as the data moves — "high revenue" next quarter means whichever stores are high-revenue then, not the ones that were today:
 
 ```python
->>> twin.env(where=[("revenue", "avg", ">", 400)]).save("High revenue")
+>>> twin.env(where=[("revenue", "mean", ">", 400)]).save("High revenue")
 Group('High revenue', id=VSaJDm4kBhTgYcN8rQvEs)
 ```
 

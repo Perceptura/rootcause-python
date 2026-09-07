@@ -79,7 +79,7 @@ def test_named_subset_saves_as_an_environments_definition(api, transport):
 def test_where_subset_saves_its_compiled_stat_filters(api, transport):
     api.on("POST", GROUPS_PATH, {"data": BIG_GROUP}, status=201)
 
-    group = _twin(transport).env(where=[("revenue", "avg", ">", 400)]).save("High revenue")
+    group = _twin(transport).env(where=[("revenue", "mean", ">", 400)]).save("High revenue")
 
     assert group.definition["mode"] == "statFilters"
     assert api.body_of("POST", "/environment-groups") == {
@@ -104,7 +104,7 @@ def test_a_subset_matching_nothing_still_saves(api, transport):
     }}
     api.on("POST", GROUPS_PATH, {"data": empty_doc}, status=201)
 
-    subset = _twin(transport).env(where=[("revenue", "avg", "<", 0)])
+    subset = _twin(transport).env(where=[("revenue", "mean", "<", 0)])
     group = subset.save("Loss makers")
 
     assert group.id == "grp-none"
@@ -353,7 +353,7 @@ def test_update_by_environment_names_replaces_the_definition(api, transport):
 def test_update_by_where_replaces_the_definition_with_stat_filters(api, transport):
     api.on("PATCH", f"{GROUPS_PATH}/grp-eu", {"data": {**EU_GROUP, "definition": BIG_GROUP["definition"]}})
 
-    Group(_twin(transport), dict(EU_GROUP)).update(where=[("revenue", "avg", ">", 400)])
+    Group(_twin(transport), dict(EU_GROUP)).update(where=[("revenue", "mean", ">", 400)])
 
     assert api.body_of("PATCH", "/environment-groups/grp-eu") == {"definition": BIG_GROUP["definition"]}
 
@@ -372,7 +372,7 @@ def test_update_needs_exactly_one_selection_style(api, transport):
     with pytest.raises(RootCauseError):
         group.update()
     with pytest.raises(RootCauseError):
-        group.update("london", where=[("revenue", "avg", ">", 400)])
+        group.update("london", where=[("revenue", "mean", ">", 400)])
     assert not api.requests
 
 
