@@ -437,11 +437,7 @@ class Workspace:
             frame: The data to upload.
             name: Name for the new source.
             wait: Block until the schema materialises server side.
-            timeout: Seconds this call keeps polling for the schema, when
-                `wait` is True. The upload endpoint imposes its own 300-second
-                ceiling server-side, so a longer timeout here does not buy a
-                longer upload — past 300s it only waits on an ingest the server
-                has already abandoned.
+            timeout: Seconds to wait for ingest, when `wait` is True.
 
         Returns:
             The new [`Source`](#source).
