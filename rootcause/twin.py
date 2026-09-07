@@ -379,8 +379,10 @@ class Twin:
             where: Stat filters instead of names — tuples of
                 `(column, op, value)` for constant-per-environment columns, or
                 `(column, reduce, op, value)` with reduce one of `avg`/`mean`,
-                `min`, `max`, or `any` (at least one matching row). A dict
-                filter group passes through as written.
+                `min`, `max`, or `any` (at least one matching row). `avg` is a
+                client-side spelling of `mean`, translated before the request:
+                the wire enum is `mean`, so send that if you call the REST API
+                directly. A dict filter group passes through as written.
 
         Returns:
             An [`EnvSubset`](#envsubset) pinned to those environments.

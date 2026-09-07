@@ -504,9 +504,15 @@ class Ontology:
         )
 
     def ask(self, *args: Any, **kwargs: Any) -> "NoReturn":
-        """Removed — server-side translation is gone; write Anchor SQL with [`sql`](#sql)."""
+        """Removed — write the question as Anchor SQL with [`sql`](#sql).
+
+        Only the SDK method is gone. The platform still translates a question
+        into Anchor SQL server-side, behind its own ask-a-question UI; that
+        route is simply not exposed here, because a translated statement you
+        cannot see or edit is a poor thing to build a script on.
+        """
         raise RootCauseError(
-            "Ontology.ask() was removed: the platform no longer translates prompts server-side. "
+            "Ontology.ask() was removed: the SDK no longer translates prompts for you. "
             "Write the question as Anchor SQL with onto.sql() — concepts go by quoted name, "
             "e.g. onto.sql('SELECT \"customer\", avg(\"Revenue\") GROUP BY \"customer\"'). "
             "onto.sql(\"SHOW CONCEPTS\") lists what you can reference."

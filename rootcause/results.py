@@ -201,7 +201,12 @@ class SimulationResult:
         """The platform's own export of the run.
 
         Args:
-            fmt: Export format, for example `csv`.
+            fmt: Export format. `json` carries every scenario type. `csv` is
+                only available for forecast-shaped runs (`forecast`,
+                `panel_forecast`, `prediction`) that ran against a
+                multi-environment model with parquet-backed results; anything
+                else answers 400 and points at `json`. Check `exportFormats` on
+                the run to know in advance.
 
         Returns:
             The export's raw bytes.
