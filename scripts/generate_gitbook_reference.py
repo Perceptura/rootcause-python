@@ -98,9 +98,15 @@ def fence_indented_code(text: str) -> str:
 
     A docstring writes example code as an indented block, which markdown renders
     as code but with no language, so GitBook cannot highlight it.
+
+    A docstring that fenced its own example is left alone. Continuation lines
+    inside such a block are indented, and treating those as a new indented block
+    opened a second ```python fence in the middle of the first one -- which is
+    what Twin.env's example has looked like on the published site.
     """
     out: list[str] = []
     block: list[str] = []
+    fenced = False
 
     def flush() -> None:
         if not block:
@@ -111,6 +117,14 @@ def fence_indented_code(text: str) -> str:
         block.clear()
 
     for line in text.splitlines():
+        if line.strip().startswith("```"):
+            flush()
+            fenced = not fenced
+            out.append(line)
+            continue
+        if fenced:
+            out.append(line)
+            continue
         if line.startswith("    ") or (block and not line.strip()):
             block.append(line)
             continue
