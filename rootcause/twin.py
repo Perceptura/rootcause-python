@@ -365,7 +365,7 @@ class Twin:
 
         ```python
         twin.env("london", "berlin")                       # by name
-        twin.env(where=[("revenue", "avg", ">", 400)])     # by aggregate
+        twin.env(where=[("revenue", "mean", ">", 400)])    # by aggregate
         twin.env(where=[("region", "==", "EMEA"),          # constant column
                         ("demand", "min", ">=", 0)])       # AND of filters
         ```
@@ -378,7 +378,7 @@ class Twin:
                 combos.
             where: Stat filters instead of names — tuples of
                 `(column, op, value)` for constant-per-environment columns, or
-                `(column, reduce, op, value)` with reduce one of `avg`/`mean`,
+                `(column, reduce, op, value)` with reduce one of `mean`,
                 `min`, `max`, or `any` (at least one matching row). A dict
                 filter group passes through as written.
 
@@ -1334,7 +1334,12 @@ class Twin:
         return f"<div><p><b>{self.name}</b></p><table>{rows}</table></div>"
 
 
-_ENV_REDUCERS = {"value": "value", "avg": "mean", "mean": "mean", "min": "min", "max": "max", "any": "any"}
+_ENV_REDUCERS = frozenset({"value", "mean", "min", "max", "any"})
+
+# Spellings this SDK used to accept and translate. Kept only so the error can name
+# the replacement: `avg` was a client-side alias for the engine's `mean`, which meant
+# the same filter written against the REST API directly earned a 400.
+_ENV_REDUCERS_REMOVED = {"avg": "mean"}
 
 # The engine's operator vocabulary is the UI's label strings; symbols map onto them.
 _ENV_OPERATORS = {
@@ -1367,11 +1372,15 @@ def _compile_env_where(where: "list[tuple] | dict[str, Any]") -> dict[str, Any]:
             reduce = "value"
         else:
             column, reduce, op, value = item
+            if reduce in _ENV_REDUCERS_REMOVED:
+                raise RootCauseError(
+                    f'reduce "{reduce}" was removed; use '
+                    f'"{_ENV_REDUCERS_REMOVED[reduce]}", which is what the engine calls it'
+                )
             if reduce not in _ENV_REDUCERS:
                 raise RootCauseError(
-                    f'Unknown reduce "{reduce}"; one of {sorted(set(_ENV_REDUCERS))}'
+                    f'Unknown reduce "{reduce}"; one of {sorted(_ENV_REDUCERS)}'
                 )
-            reduce = _ENV_REDUCERS[reduce]
         operator = _ENV_OPERATORS.get(str(op))
         if operator is None:
             raise RootCauseError(
@@ -1792,7 +1801,7 @@ class Group(EnvSubset):
 
         ```python
         group.update("london", "berlin", "paris")            # exact environments
-        group.update(where=[("revenue", "avg", ">", 400)])   # a filter, re-selected as data moves
+        group.update(where=[("revenue", "mean", ">", 400)])  # a filter, re-selected as data moves
         ```
 
         Runs already submitted keep the membership frozen on their snapshots;
