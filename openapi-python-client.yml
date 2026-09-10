@@ -1,0 +1,6 @@
+# The granularity enum is the pandas frequency alias set, where "s" and "S" -
+# and "h" and "H" - differ only by case. openapi-python-client names Enum
+# members by upper-casing the value, so those collide and generation aborts
+# with "Duplicate key S in enum". Literal enums emit typing.Literal instead,
+# which keeps every value exactly as the API sends it.
+literal_enums: true
