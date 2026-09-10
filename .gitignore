@@ -15,3 +15,5 @@ site/
 # reference that gets pushed to the GitBook docs repo.
 docs/
 generated-docs/
+openapi.json
+generated/

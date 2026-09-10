@@ -25,9 +25,22 @@ variables:
 generate:
   stage: generate
   image: $PYTHON_IMAGE
+  # The spec lives in perceptura-platform, which is private, so fetching it needs
+  # the job token and this project has to sit on that project's inbound job-token
+  # allowlist. --fail turns a permissions or path mistake into a failed job rather
+  # than a short HTML body the generator would then misread. python:3.12-slim
+  # ships no curl.
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends curl ca-certificates
   script:
+    - test -n "$OPENAPI_SPEC_URL" || (echo "OPENAPI_SPEC_URL is not set" && exit 1)
+    - 'curl --fail --silent --show-error --location --header "JOB-TOKEN: $CI_JOB_TOKEN" --output openapi.json "$OPENAPI_SPEC_URL"'
     - pip install openapi-python-client
-    - openapi-python-client generate --path $OPENAPI_SPEC_URL --output-path /tmp/gen --overwrite
+    # --path takes a file, --url takes a URL. Passing a URL to --path makes the
+    # generator look for a file of that name, which is why this step could never
+    # have worked against $OPENAPI_SPEC_URL directly.
+    - openapi-python-client generate --path openapi.json --config openapi-python-client.yml --output-path /tmp/gen --overwrite
+    - mkdir -p generated
     - cp -r /tmp/gen/root_cause_public_api_client/* generated/
   artifacts:
     paths:
