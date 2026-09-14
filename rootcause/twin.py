@@ -161,9 +161,10 @@ class Twin:
             RootCauseApiError: Another twin in the workspace already holds this
                 name — the platform refuses rather than picking a different one.
         """
-        if not name.strip():
+        desired = name.strip()
+        if not desired:
             raise InvalidArgumentError("A twin name cannot be empty.")
-        envelope = self._transport.request("PATCH", self._twin_path(), json_body={"name": name})
+        envelope = self._transport.request("PATCH", self._twin_path(), json_body={"name": desired})
         self.doc = envelope.get("data", envelope) or self.doc
         return self
 
