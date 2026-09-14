@@ -355,9 +355,11 @@ RootCauseApiError: [409 Conflict] Another digital twin in this workspace is alre
 ...         twin.delete()
 ```
 
-Deleting a source a twin was trained on is refused, because the twin would keep its id
-and lose its history, backtests and any relink target. The error names the twins, so the
-usual move is to deal with them first — or say so explicitly:
+`source.delete()` takes the sources derived from it with it. It is refused when a twin was
+trained on any of them — the twin would keep its id and lose its history, backtests and any
+relink target — and refused when the source is shared into other workspaces, since deleting
+it removes it from those too. Both say what blocks them, so the usual move is to deal with
+that first — or say so explicitly:
 
 ```python
 >>> ws.source("orders-2024").delete()

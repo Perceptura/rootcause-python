@@ -84,14 +84,15 @@ class Source:
         self.doc = doc
 
     def delete(self, *, force: bool = False) -> None:
-        """Delete this source permanently. Requires the `sources:delete` scope.
+        """Delete this source and every source derived from it. Requires the `sources:delete` scope.
 
-        Refused while a twin was trained on this source: those twins would keep
-        their ids but lose their history, backtests and any relink target. The
-        error names them. Delete or retrain the twins first, or pass `force`.
+        Refused while a twin was trained on any of them — those twins would keep
+        their ids and lose their history, backtests and any relink target — and
+        refused while the source is shared into other workspaces, since deleting
+        it removes it from those too. Both errors say what blocks it.
 
         Args:
-            force: Delete even when twins were trained on this source.
+            force: Delete through both refusals.
         """
         self._transport.request("DELETE", self._path(), params={"force": "true"} if force else None)
 
