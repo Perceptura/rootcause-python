@@ -147,6 +147,26 @@ class Twin:
         """
         self._transport.request("DELETE", self._twin_path())
 
+    def rename(self, name: str) -> "Twin":
+        """Rename this twin in place. Requires the `digital-twins:write` scope.
+
+        Args:
+            name: The new display name, unique within the workspace.
+
+        Returns:
+            This twin.
+
+        Raises:
+            InvalidArgumentError: `name` is empty.
+            RootCauseApiError: Another twin in the workspace already holds this
+                name — the platform refuses rather than picking a different one.
+        """
+        if not name.strip():
+            raise InvalidArgumentError("A twin name cannot be empty.")
+        envelope = self._transport.request("PATCH", self._twin_path(), json_body={"name": name})
+        self.doc = envelope.get("data", envelope) or self.doc
+        return self
+
     def link(self) -> "Any":
         """This twin version's page on the platform, as a clickable URL."""
         from rootcause._links import workspace_link

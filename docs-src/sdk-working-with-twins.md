@@ -327,6 +327,24 @@ PosixPath('c8.rctwin')
 
 Compute always stays on the platform; the file makes the model portable between environments, not the algorithms.
 
+## Renaming
+
+`twin.rename()` renames a twin in place and hands the handle back, so it chains:
+
+```python
+>>> ws.twin("Digital Twin (3)").rename("Weekly demand")
+Twin('Weekly demand', id=dt_8f2c…)
+```
+
+Names are unique within a workspace. A name another twin already holds is refused
+rather than quietly turned into `Weekly demand (2)`, so what you asked for is what
+you get or you hear why not:
+
+```python
+>>> ws.twin("experiment-4").rename("Weekly demand")
+RootCauseApiError: [409 Conflict] Another digital twin in this workspace is already called 'Weekly demand'.
+```
+
 ## Cleaning up
 
 `twin.delete()` removes a twin permanently — fitted models, every version, the run history, and the record itself; running workflows are cancelled first. Sources and datasets answer the same verb. There is no undo, which makes the iterate-and-discard loop explicit:
@@ -335,6 +353,19 @@ Compute always stays on the platform; the file makes the model portable between 
 >>> for twin in ws.twins:
 ...     if twin.name.startswith("experiment-"):
 ...         twin.delete()
+```
+
+Deleting a source a twin was trained on is refused, because the twin would keep its id
+and lose its history, backtests and any relink target. The error names the twins, so the
+usual move is to deal with them first — or say so explicitly:
+
+```python
+>>> ws.source("orders-2024").delete()
+RootCauseApiError: [409 Conflict] This source is the training data of digital twin
+'Weekly demand'. Deleting it leaves them without history, backtests or a relink
+target — delete those twins first, or repeat this request with force=true.
+
+>>> ws.source("orders-2024").delete(force=True)   # yes, really
 ```
 
 Deletion needs the matching scope on your key (`digital-twins:delete`, `sources:delete`, `datasets:delete`).
