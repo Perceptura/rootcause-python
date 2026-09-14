@@ -1,6 +1,6 @@
 import pytest
 
-from rootcause.errors import RootCauseError
+from rootcause.errors import InvalidArgumentError, RootCauseApiError, RootCauseError
 from rootcause.results import SampleDraws, SimulationResult
 from rootcause.twin import Twin
 
@@ -150,3 +150,42 @@ def test_forecast_frame_unwraps_version_label_and_labels_environments(api, trans
     frame = result.to_frame()
     assert set(frame["environment"]) == {"uk", "fr", "aggregate"}
     assert len(frame) == 3
+
+
+def test_rename_patches_the_name_and_keeps_the_handle(api, transport):
+    api.on("PATCH", "/api/v1/workspaces/ws1/digital-twins/tw1", {"data": {"id": "tw1", "name": "Demand", "type": "static"}})
+    twin = Twin(transport, "ws1", {"id": "tw1", "name": "Churn", "type": "static"})
+
+    same = twin.rename("Demand")
+
+    assert same is twin
+    assert twin.name == "Demand"
+    assert api.body_of("PATCH", "/digital-twins/tw1") == {"name": "Demand"}
+
+
+def test_rename_to_a_name_another_twin_holds_raises(api, transport):
+    api.on(
+        "PATCH",
+        "/api/v1/workspaces/ws1/digital-twins/tw1",
+        {"title": "Conflict", "status": 409, "detail": "Another digital twin in this workspace is already called 'Demand'."},
+        status=409,
+    )
+
+    with pytest.raises(RootCauseApiError) as caught:
+        Twin(transport, "ws1", {"id": "tw1", "name": "Churn", "type": "static"}).rename("Demand")
+
+    assert caught.value.status == 409
+    assert "already called 'Demand'" in str(caught.value)
+
+
+def test_rename_sends_the_stripped_name(api, transport):
+    api.on("PATCH", "/api/v1/workspaces/ws1/digital-twins/tw1", {"data": {"id": "tw1", "name": "Demand", "type": "static"}})
+    Twin(transport, "ws1", {"id": "tw1", "name": "Churn", "type": "static"}).rename("  Demand  ")
+    assert api.body_of("PATCH", "/digital-twins/tw1") == {"name": "Demand"}
+
+
+def test_rename_rejects_an_empty_name_without_a_request(api, transport):
+    with pytest.raises(InvalidArgumentError):
+        Twin(transport, "ws1", {"id": "tw1", "name": "Churn", "type": "static"}).rename("   ")
+
+    assert api.requests == []

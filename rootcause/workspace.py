@@ -83,13 +83,18 @@ class Source:
         self._workspace_id = workspace_id
         self.doc = doc
 
-    def delete(self) -> None:
-        """Delete this source permanently. Requires the `sources:delete` scope.
+    def delete(self, *, force: bool = False) -> None:
+        """Delete this source and every source derived from it. Requires the `sources:delete` scope.
 
-        Twins and datasets built on it keep their ids but lose their data —
-        delete or retrain those first.
+        Refused while a twin was trained on any of them — those twins would keep
+        their ids and lose their history, backtests and any relink target — and
+        refused while the source is shared into other workspaces, since deleting
+        it removes it from those too. Both errors say what blocks it.
+
+        Args:
+            force: Delete through both refusals.
         """
-        self._transport.request("DELETE", self._path())
+        self._transport.request("DELETE", self._path(), params={"force": "true"} if force else None)
 
     def link(self) -> "PlatformLink":
         """The source's detail page on the platform, as a clickable URL."""

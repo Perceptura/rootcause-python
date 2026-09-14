@@ -31,7 +31,7 @@ _STATUS_HINTS = {
     401: "Check the API key (ROOTCAUSE_API_KEY) or run rc.login() again.",
     403: "The credential lacks a scope for this operation — rc.whoami() shows what it carries.",
     404: "The object may have been deleted, or it lives in another workspace.",
-    409: "The resource changed underneath this call — re-read it and retry.",
+    409: "The request conflicts with what is already there — the message above says what blocks it.",
     413: "The payload is too large for one request — upload in batches with source.extend().",
     429: "Rate limited. The SDK retries these automatically; sustained 429s mean the key's per-minute limit is too low for this workload.",
     500: "A platform-side fault. Retrying rarely helps; quote the traceId to support.",
