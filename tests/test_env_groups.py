@@ -490,3 +490,78 @@ def test_a_subset_passes_per_environment_samples_through(api, transport):
     scenario = api.body_of("POST", "/simulations")["scenario"]
     assert scenario["panelSamples"] == {"london": [{"revenue": 1}], "berlin": [{"revenue": 2}]}
     assert scenario["environments"] == ["london", "berlin"]
+
+
+# ── the invariant every Group verb shares ───────────────────────────────────
+#
+# A group is sent by id, not by the names it currently resolves to, so the
+# platform can freeze onto the run exactly what it resolved — a later edit or
+# deletion of the group never rewrites what the run actually covered. That only
+# holds if the scenario carries no `environments` of its own: sending both would
+# have the two intersected, and sending names instead of the id would lose the
+# snapshot entirely. Neither is visible in a passing run, which is why it is
+# asserted for every verb rather than sampled.
+
+GROUP_VERBS = [
+    ("intervene", lambda g: g.intervene({"price": 1.0}, outcomes=["revenue"])),
+    ("forecast", lambda g: g.forecast(horizon=6, targets=["revenue"])),
+    ("explain", lambda g: g.explain(effect="revenue")),
+    ("optimise", lambda g: g.optimise(
+        [{"variable": "revenue", "metricSqlQuery": "SELECT 1", "direction": "maximise"}],
+        decision_vars=["price"], horizon=6,
+    )),
+    ("root_cause", lambda g: g.root_cause("revenue", [{"revenue": 1}])),
+    ("anomalies", lambda g: g.anomalies([{"revenue": 1}])),
+    ("best_action", lambda g: g.best_action([{"variable": "revenue", "value": 1.0}], horizon=6)),
+    ("monitor", lambda g: g.monitor([{"revenue": 1}])),
+]
+
+
+@pytest.fixture
+def group_run(api):
+    api.on("POST", f"/api/v1/workspaces/{WS}/simulations", {"data": {"runId": "r1"}}, status=202)
+    api.on("GET", f"/api/v1/workspaces/{WS}/simulations/r1", {"data": {"status": "completed"}})
+    return api
+
+
+def _group(transport) -> Group:
+    return Group(_twin(transport), dict(EU_GROUP))
+
+
+@pytest.mark.parametrize("name,call", GROUP_VERBS, ids=[n for n, _ in GROUP_VERBS])
+def test_every_group_verb_sends_the_group_by_id(group_run, transport, name, call):
+    call(_group(transport))
+
+    body = group_run.body_of("POST", "/simulations")
+    assert body["environmentGroupIds"] == ["grp-eu"]
+
+
+@pytest.mark.parametrize("name,call", GROUP_VERBS, ids=[n for n, _ in GROUP_VERBS])
+def test_no_group_verb_also_names_environments(group_run, transport, name, call):
+    call(_group(transport))
+
+    scenario = group_run.body_of("POST", "/simulations")["scenario"]
+    assert scenario.get("environments") is None, (
+        f"{name} sent environments alongside environmentGroupIds; the platform intersects the two, "
+        "so the group could only ever shrink what it resolved to"
+    )
+
+
+@pytest.mark.parametrize("name,call", GROUP_VERBS, ids=[n for n, _ in GROUP_VERBS])
+def test_no_group_verb_resolves_the_group_before_running_it(group_run, transport, name, call):
+    call(_group(transport))
+
+    assert _paths(group_run, "/environment-groups/resolve") == [], (
+        f"{name} resolved the group client-side; the point of sending the id is that the platform "
+        "resolves it at submit time and freezes the result onto the run"
+    )
+
+
+def test_the_verb_list_covers_every_verb_a_group_answers():
+    answered = {
+        name
+        for name in vars(Group)
+        if not name.startswith("_") and callable(getattr(Group, name))
+    } - {"rename", "update", "delete", "link", "sample", "adjacency", "graph", "save"}
+
+    assert answered == {name for name, _ in GROUP_VERBS}
