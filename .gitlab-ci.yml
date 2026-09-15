@@ -41,11 +41,14 @@ test:
   stage: test
   image: $PYTHON_IMAGE
   script:
+    - apt-get update -qq && apt-get install -y -qq git
     - pip install uv
-    # The scenario-shape parity tests read rootcause-backend's models to check
-    # the SDK sends no key pydantic would drop; they skip when it is absent, so
-    # the clone is what makes them run rather than pass vacuously.
-    - git clone --depth 1 "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/perceptura/rootcause-backend.git" ../rootcause-backend
+    # The scenario-shape parity tests read rootcause-backend's models to check the
+    # SDK sends no key pydantic would drop, and skip when it is absent — so without
+    # this clone they would pass vacuously. Only the models directory is fetched.
+    - git clone --depth 1 --filter=blob:none --sparse "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/perceptura/rootcause-backend.git" ../rootcause-backend
+    - git -C ../rootcause-backend sparse-checkout set src/rootcause/models
+    - test -f ../rootcause-backend/src/rootcause/models/digital_twin_simulations.py
     - uv run --extra dev pytest -q
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
@@ -58,6 +61,8 @@ lint:
   script:
     - pip install ruff
     - ruff check rootcause tests
+  # Orange until the findings already on main are burned down; it reports, it
+  # does not gate.
   allow_failure: true
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
