@@ -2,7 +2,8 @@
 
 import difflib
 import time
-from typing import TYPE_CHECKING, Any, Callable, Iterator
+from collections.abc import Callable, Iterator
+from typing import TYPE_CHECKING, Any
 
 from rootcause import _guard
 from rootcause._http import Transport, expect, poll_job

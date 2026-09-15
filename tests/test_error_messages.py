@@ -1,7 +1,6 @@
 """Error messages must be readable and suggest the fix — the fixtures below are
 real garbage the platform has produced, verbatim."""
 
-import pytest
 
 from rootcause.errors import JobFailedError, RootCauseApiError
 

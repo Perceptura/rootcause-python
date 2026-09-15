@@ -1,7 +1,8 @@
 """Return types for the twin's verbs; each one flattens to a DataFrame."""
 
-from rootcause.errors import InvalidArgumentError, RootCauseError
 from typing import TYPE_CHECKING, Any
+
+from rootcause.errors import InvalidArgumentError, RootCauseError
 
 if TYPE_CHECKING:
     import pandas as pd

@@ -42,15 +42,36 @@ from rootcause.errors import (
     RootCauseError,
 )
 from rootcause.graph import Graph
-from rootcause.interventions import add, adjust_prob, at, mean_metrics, members, metric, objective, pct, prob, range, set, target  # noqa: A004
+from rootcause.interventions import (
+    add,
+    adjust_prob,
+    at,
+    mean_metrics,
+    members,
+    metric,
+    objective,
+    pct,
+    prob,
+    range,
+    set,
+    target,
+)
 from rootcause.ontology import AnchorSqlResult, Ontology
-from rootcause.results import ForecastResult, PredictionResult, SampleDraws, ScoreResult, SimulationResult, UpdateResult
+from rootcause.results import (
+    ForecastResult,
+    PredictionResult,
+    SampleDraws,
+    ScoreResult,
+    SimulationResult,
+    UpdateResult,
+)
 from rootcause.twin import Twin
 from rootcause.workspace import Connector, Dataset, Source, Workspace
 
 if TYPE_CHECKING:
-    import pandas as pd
     from pathlib import Path
+
+    import pandas as pd
 
 # The tag is the version: CI patches pyproject at build time, so the installed
 # distribution's metadata is the one source of truth. Source checkouts that
@@ -270,10 +291,13 @@ __all__ = [
     "RootCauseApiError",
     "RootCauseError",
     "SampleDraws",
+    "ScoreResult",
     "SimulationResult",
     "Source",
     "Twin",
+    "UpdateResult",
     "Workspace",
+    "__version__",
     "add",
     "adjust_prob",
     "at",
@@ -287,10 +311,10 @@ __all__ = [
     "objective",
     "pct",
     "prob",
+    "range",
     "render_widget",
     "set",
     "target",
     "workspace",
     "workspaces",
-    "__version__",
 ]

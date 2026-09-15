@@ -4,7 +4,6 @@ import pytest
 from rootcause import direct
 from rootcause.direct import frame_fingerprint
 
-
 FRAME = pd.DataFrame({"a": [1.0, 2.0, 3.0], "b": [2.0, 4.0, 6.0]})
 
 

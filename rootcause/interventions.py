@@ -20,7 +20,7 @@ def _number(value: Any, argument: str) -> float:
         raise InvalidArgumentError(f"{argument} takes a number, not {value!r}") from None
 
 
-def set(value: float | int | str | bool) -> dict[str, Any]:  # noqa: A001
+def set(value: float | str | bool) -> dict[str, Any]:
     """Set the variable to an exact value.
 
     A bare value anywhere `do=` is accepted means the same thing.
@@ -129,7 +129,7 @@ def at(
     return scheduled
 
 
-def range(from_: float | None = None, to: float | None = None, *, steps: int | None = None) -> dict[str, Any]:  # noqa: A001
+def range(from_: float | None = None, to: float | None = None, *, steps: int | None = None) -> dict[str, Any]:
     """Sweep a numeric variable across a grid instead of pinning it: rc.range(15, 30).
 
     A scenario carries at most one range intervention; read the curves back with

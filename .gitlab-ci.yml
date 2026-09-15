@@ -68,8 +68,9 @@ lint:
   script:
     - pip install ruff
     - ruff check rootcause tests
-  # Orange until the findings already on main are burned down; it reports, it
-  # does not gate.
+  # Eight findings left, all judgement calls rather than mechanical: three blind
+  # excepts that are deliberate display fallbacks, two mutable class defaults, and
+  # three test smells. Non-gating until they are decided one way or the other.
   allow_failure: true
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
