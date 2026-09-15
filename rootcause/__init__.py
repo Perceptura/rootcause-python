@@ -46,7 +46,7 @@ from rootcause.interventions import add, adjust_prob, at, mean_metrics, members,
 from rootcause.ontology import AnchorSqlResult, Ontology
 from rootcause.results import ForecastResult, PredictionResult, SampleDraws, ScoreResult, SimulationResult, UpdateResult
 from rootcause.twin import Twin
-from rootcause.workspace import Connector, DataView, Source, Workspace
+from rootcause.workspace import Connector, Dataset, Source, Workspace
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -255,7 +255,7 @@ __all__ = [
     "AuthenticationError",
     "ConnectionFailedError",
     "Connector",
-    "DataView",
+    "Dataset",
     "ForecastResult",
     "Graph",
     "InvalidArgumentError",

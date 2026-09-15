@@ -428,7 +428,7 @@ def test_an_empty_environment_mapping_is_refused(api, transport):
 
 
 def test_every_kind_has_a_name_for_every_family():
-    for family in (EXPLANATION_TYPES, OPTIMISATION_TYPES, ROOT_CAUSE_TYPES, ANOMALY_TYPES):
+    for family in (EXPLANATION_TYPES, OPTIMISATION_TYPES, ROOT_CAUSE_TYPES, ANOMALY_TYPES, COUNTERFACTUAL_TYPES):
         assert sorted(family) == sorted(KINDS)
 
 
@@ -454,7 +454,7 @@ def test_an_unknown_kind_says_so_rather_than_guessing(api, transport):
 )
 def test_best_action_maps_the_scenario_type_per_kind(run, transport, kind, expected):
     twin = _twin(transport, kind)
-    rows = [{"tenure": 3}] if kind == "static" else None
+    rows = None if kind in {"temporal", "multi-environment-temporal"} else [{"tenure": 3}]
 
     twin.best_action([rc.target("Churn", "No")], rows=rows)
 
@@ -471,15 +471,7 @@ def test_best_action_carries_the_static_baselines_and_the_solver_limits(run, tra
 
     assert _scenario(run) == {
         "type": "counterfactual",
-        "targets": [
-            {
-                "variable": "Churn",
-                "value": "No",
-                "matchMode": "tolerance",
-                "aggregation": "point",
-                "targetMode": "absolute",
-            }
-        ],
+        "targets": [{"variable": "Churn", "value": "No", "matchMode": "tolerance"}],
         "maxChanges": 2,
         "samples": [{"tenure": 3}, {"tenure": 40}],
         "constraints": {"tenure": {"type": "fixed"}},
@@ -506,12 +498,14 @@ def test_best_action_scopes_a_panel_twin_to_the_environments_named(run, transpor
     assert _scenario(run)["environments"] == ["london", "berlin"]
 
 
-def test_best_action_draws_its_own_baselines_on_a_multi_environment_static_twin(run, transport):
-    _twin(transport, "multi-environment-static").best_action([rc.target("Churn", "No")])
+def test_best_action_carries_baselines_into_every_environment_of_a_static_panel(run, transport):
+    _twin(transport, "multi-environment-static").best_action(
+        [rc.target("Churn", "No")], rows=[{"tenure": 3}]
+    )
 
     scenario = _scenario(run)
     assert scenario["type"] == "panel_counterfactual"
-    assert "samples" not in scenario
+    assert scenario["samples"] == [{"tenure": 3}]
 
 
 @pytest.mark.parametrize(
@@ -523,11 +517,16 @@ def test_best_action_draws_its_own_baselines_on_a_multi_environment_static_twin(
         (
             "temporal",
             {"targets": [rc.target("revenue", 1.0)], "rows": [{"a": 1}]},
-            "only applies to static twins",
+            "solves from its own",
         ),
         (
             "multi-environment-static",
-            {"targets": [rc.target("Churn", "No")], "horizon": 4},
+            {"targets": [rc.target("Churn", "No")]},
+            "needs rows=",
+        ),
+        (
+            "multi-environment-static",
+            {"targets": [rc.target("Churn", "No")], "rows": [{"a": 1}], "horizon": 4},
             "only applies to temporal twins",
         ),
         (
@@ -623,6 +622,5 @@ def test_monitor_rejects_an_unusable_setup_before_any_request(api, transport, ki
 
 
 def test_every_wizard_family_has_a_verb():
-    for family in (COUNTERFACTUAL_TYPES,):
-        assert sorted(family) == sorted(KINDS)
+    assert sorted(COUNTERFACTUAL_TYPES) == sorted(KINDS)
     assert sorted(HEALTH_MONITOR_TYPES) == ["multi-environment-temporal", "temporal"]

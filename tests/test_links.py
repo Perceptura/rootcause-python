@@ -5,7 +5,7 @@ import pytest
 from rootcause.errors import RootCauseError
 from rootcause.results import ScoreResult, SimulationResult
 from rootcause.twin import Twin
-from rootcause.workspace import DataView, Source, Workspace
+from rootcause.workspace import Dataset, Source, Workspace
 
 WS = "ws1"
 
@@ -42,7 +42,7 @@ def test_graph_and_env_subset_link_to_their_twin(transport):
 
 def test_source_and_dataset_links(transport):
     assert Source(transport, WS, {"id": "src1"}).link().endswith(f"/space/{WS}/sources/src1")
-    assert DataView(transport, WS, {"id": "dv1"}).link().endswith(f"/space/{WS}/datasets/dv1")
+    assert Dataset(transport, WS, {"id": "dv1"}).link().endswith(f"/space/{WS}/datasets/dv1")
 
 
 def test_ontology_link(transport):

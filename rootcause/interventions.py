@@ -261,11 +261,13 @@ def target(
         tolerance: Width of the band when `match="tolerance"`. 0 or omitted
             means an exact match.
         tolerance_type: `absolute` units, or `percentage` of the target.
-        at: Temporal and panel twins: the timestamp (ms epoch) to reach it by.
-        aggregation: Temporal and panel twins: whether the target applies at a
-            `point`, to the `mean` over the horizon, or to the `cumulative` total.
-        mode: Temporal and panel twins: read `value` as an `absolute` level, or
-            as `relative_percentage` / `relative_absolute` against the baseline.
+        at: Temporal twins: the timestamp (ms epoch) to reach it by.
+        aggregation: Temporal twins: whether the target applies at a `point`,
+            to the `mean` over the horizon, or to the `cumulative` total. Only
+            sent when it is not `point`, so a static target stays static.
+        mode: Temporal twins: read `value` as an `absolute` level, or as
+            `relative_percentage` / `relative_absolute` against the baseline.
+            Only sent when it is not `absolute`.
 
     Examples:
         >>> rc.target("Churn", "No")
@@ -288,8 +290,6 @@ def target(
         "variable": variable,
         "value": value,
         "matchMode": _MATCH_MODES[str(match).lower()],
-        "aggregation": str(aggregation),
-        "targetMode": str(mode),
     }
     if tolerance is not None:
         spec["toleranceValue"] = _number(tolerance, "tolerance")
@@ -297,6 +297,10 @@ def target(
         spec["toleranceType"] = str(tolerance_type)
     if at is not None:
         spec["timestamp"] = at
+    if str(aggregation) != "point":
+        spec["aggregation"] = str(aggregation)
+    if str(mode) != "absolute":
+        spec["targetMode"] = str(mode)
     return spec
 
 

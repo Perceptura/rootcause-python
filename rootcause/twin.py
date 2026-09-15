@@ -65,6 +65,7 @@ HEALTH_MONITOR_TYPES = {
     "multi-environment-temporal": "panel_causal_health_monitor",
 }
 MONITOR_SOURCES = {"observed", "forecast"}
+TEMPORAL_TARGET_KEYS = {"timestamp", "aggregation", "targetMode"}
 
 
 class Twin:
@@ -863,9 +864,10 @@ class Twin:
         Args:
             targets: The outcomes to reach, from `rc.target(...)` or plain
                 dicts keyed as the platform spells them.
-            rows: Static twins: the baseline states to improve, one row per
-                starting point. Temporal and panel twins run from the twin's
-                own trajectory instead and take no rows.
+            rows: The baseline states to improve, one row per starting point.
+                Required on static twins, including multi-environment static
+                panels, where the same rows are solved in every environment.
+                Temporal twins solve from their own trajectory and take none.
             environments: Panel twins: which environments to solve for.
             max_changes: Most variables the solver may change per baseline.
             constraints: Per-variable limits on what may change, and how far.
@@ -877,8 +879,8 @@ class Twin:
             A [`SimulationResult`](#simulationresult).
 
         Raises:
-            RootCauseError: No targets, baseline rows on a twin that draws its
-                own, a static twin with no rows, `horizon` on a twin with no
+            RootCauseError: No targets, baseline rows on a twin with a time
+                axis, a static twin with no rows, `horizon` on a twin with no
                 time axis, or `environments` on a twin that is not a panel twin.
 
         Examples:
@@ -1177,24 +1179,32 @@ class Twin:
                     f"Every target needs the variable it wants to move; build them with rc.target(...). Got: {entry!r}"
                 )
         self._reject_environments(environments)
+        if not self.is_temporal:
+            timed = sorted({key for entry in targets for key in entry if key in TEMPORAL_TARGET_KEYS})
+            if timed:
+                raise RootCauseError(
+                    f'{", ".join(timed)} on a target only applies to temporal twins; "{self.name}" is '
+                    f"{self.kind} and reaches its targets in a single period"
+                )
         scenario_type = self._scenario_type(COUNTERFACTUAL_TYPES, "best action")
         scenario: dict[str, Any] = {
             "type": scenario_type,
             "targets": list(targets),
             "maxChanges": _guard.positive(max_changes, "max_changes"),
         }
-        if scenario_type == "counterfactual":
-            if rows is None:
+        if self.is_temporal:
+            if rows is not None:
                 raise RootCauseError(
-                    f'"{self.name}" is a static twin, so best_action() needs rows=: the baseline states to '
-                    "improve, one row per starting point"
+                    f'rows= does not apply to "{self.name}"; a {self.kind} twin solves from its own '
+                    "trajectory, so say when a target has to be met with rc.target(..., at=timestamp) instead"
                 )
-            scenario["samples"] = _guard.records(rows, "rows")
-        elif rows is not None:
+        elif rows is None:
             raise RootCauseError(
-                f'rows= only applies to static twins; "{self.name}" is {self.kind} and the solver works from '
-                "the twin's own trajectory, so pass targets and constraints instead"
+                f'"{self.name}" is a {self.kind} twin, so best_action() needs rows=: the baseline states to '
+                "improve, one row per starting point"
             )
+        else:
+            scenario["samples"] = _guard.records(rows, "rows")
         if horizon is not None:
             if not self.is_temporal:
                 raise RootCauseError(

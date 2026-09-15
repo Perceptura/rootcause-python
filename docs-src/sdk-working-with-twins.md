@@ -153,13 +153,13 @@ A temporal twin optimizes over a horizon and needs `horizon=`; a static one opti
 >>> twin.best_action([rc.target("Churn", "No")], rows=at_risk)
 ```
 
-A static twin needs `rows=`, the baseline states to improve — one row per starting point. Temporal and panel twins work from the twin's own trajectory instead and take no rows; there `rc.target(..., at=timestamp)` says when the target has to be met, and `horizon=` bounds how far ahead the solver may act:
+Static twins need `rows=`, the baseline states to improve — one row per starting point. A multi-environment static panel takes them too, and solves the same rows in every environment. Temporal twins work from the twin's own trajectory instead and take no rows; there `rc.target(..., at=timestamp)` says when the target has to be met, and `horizon=` bounds how far ahead the solver may act:
 
 ```python
 >>> twin.best_action([rc.target("revenue", 1.2e6, match="orMore", at=1780272000000)], horizon=12)
 ```
 
-`match=` decides what counts as arriving — `tolerance` for a band around the value (widened with `tolerance=`), `orMore` for at-least, `orLess` for at-most. `max_changes=` caps how many variables one answer may touch, `constraints=` locks what the business cannot move, and panel twins take `environments=`.
+`match=` decides what counts as arriving — `tolerance` for a band around the value (widened with `tolerance=`), `orMore` for at-least, `orLess` for at-most — and applies on every twin kind. Say nothing and each kind keeps its own rule: a 10% band on a static or point target, at-least on a cumulative one. `max_changes=` caps how many variables one answer may touch, `constraints=` locks what the business cannot move, and panel twins take `environments=`.
 
 ### Diagnosis
 

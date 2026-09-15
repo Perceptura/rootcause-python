@@ -148,7 +148,7 @@ class Source:
         return f"Source({self.name!r}, id={self.id})"
 
 
-class DataView:
+class Dataset:
     """A derived, queryable dataset built from one or more sources."""
 
     def __init__(self, transport: Transport, workspace_id: str, doc: dict[str, Any]) -> None:
@@ -212,7 +212,7 @@ class DataView:
         return list(envelope.get("data", []))
 
     def __repr__(self) -> str:
-        return f"DataView({self.name!r}, id={self.id})"
+        return f"Dataset({self.name!r}, id={self.id})"
 
 
 class Connector:
@@ -386,7 +386,7 @@ class Workspace:
 
     @property
     def datasets(self) -> _Collection:
-        collection = _Collection(lambda: self._list("/datasets"), lambda doc: DataView(self._transport, self.id, doc))
+        collection = _Collection(lambda: self._list("/datasets"), lambda doc: Dataset(self._transport, self.id, doc))
         collection.kind = "dataset"
         return collection
 
@@ -428,7 +428,7 @@ class Workspace:
         doc = envelope.get("data", envelope)
         return Connector(self._transport, self.id, doc)
 
-    def dataset(self, needle: str) -> DataView:
+    def dataset(self, needle: str) -> Dataset:
         return self.datasets[needle]
 
     def source(self, needle: str) -> Source:

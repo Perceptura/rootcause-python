@@ -1,5 +1,6 @@
 stages:
   - generate
+  - test
   - build
   - publish
 
@@ -35,6 +36,33 @@ generate:
   rules:
     - if: $CI_PIPELINE_SOURCE == "trigger"
     - if: $CI_PIPELINE_SOURCE == "web"
+
+test:
+  stage: test
+  image: $PYTHON_IMAGE
+  script:
+    - pip install uv
+    # The scenario-shape parity tests read rootcause-backend's models to check
+    # the SDK sends no key pydantic would drop; they skip when it is absent, so
+    # the clone is what makes them run rather than pass vacuously.
+    - git clone --depth 1 "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/perceptura/rootcause-backend.git" ../rootcause-backend
+    - uv run --extra dev pytest -q
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_TAG =~ /^[0-9]+\.[0-9]+\.[0-9]+([ab]|rc)?[0-9]*$/
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+lint:
+  stage: test
+  image: $PYTHON_IMAGE
+  script:
+    - pip install ruff
+    - ruff check rootcause tests
+  allow_failure: true
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_TAG =~ /^[0-9]+\.[0-9]+\.[0-9]+([ab]|rc)?[0-9]*$/
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 build:
   stage: build
