@@ -78,7 +78,7 @@ The three statuses are the contract: `committed` (new rows folded in), `up_to_da
 
 ## Asking a trained twin a question
 
-Every simulation family the platform's New Simulation wizard offers has a verb here, and each one blocks until the run completes. Which verb a twin accepts depends on what kind of twin it is, and the SDK refuses the wrong one before submitting anything rather than letting the platform answer with a 422:
+Every simulation family the platform's New Simulation wizard offers has a verb here, and each one blocks until the run completes. Which verb a twin accepts depends on what kind of twin it is, and the SDK refuses the wrong one before submitting anything:
 
 | Question | Verb | Twin kinds |
 | --- | --- | --- |

@@ -113,7 +113,7 @@ A trained twin has a verb for every question the platform's New Simulation wizar
 >>> twin.monitor(observed)                  # how is the system trending?
 ```
 
-Which verbs a twin accepts depends on its kind, and the SDK refuses the wrong one before it submits anything rather than letting the platform answer with a 422. [Working with Digital Twins](sdk-working-with-twins.md#asking-a-trained-twin-a-question) has the table and a worked example of each.
+Which verbs a twin accepts depends on its kind, and the SDK refuses the wrong one before it submits anything. [Working with Digital Twins](sdk-working-with-twins.md#asking-a-trained-twin-a-question) has the table and a worked example of each.
 
 Everything tabular answers `to_frame()`. Everything long-running blocks with a progress line and raises a typed error if the job fails, so a notebook cell either completes or tells you why.
 
