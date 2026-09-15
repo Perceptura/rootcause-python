@@ -471,7 +471,7 @@ def test_best_action_carries_the_static_baselines_and_the_solver_limits(run, tra
 
     assert _scenario(run) == {
         "type": "counterfactual",
-        "targets": [{"variable": "Churn", "value": "No", "matchMode": "tolerance"}],
+        "targets": [{"variable": "Churn", "value": "No"}],
         "maxChanges": 2,
         "samples": [{"tenure": 3}, {"tenure": 40}],
         "constraints": {"tenure": {"type": "fixed"}},
@@ -540,6 +540,18 @@ def test_best_action_rejects_an_unusable_setup_before_any_request(api, transport
     with pytest.raises((RootCauseError, InvalidArgumentError), match=message):
         _twin(transport, kind).best_action(**kwargs)
     assert api.requests == []
+
+
+def test_target_says_nothing_about_matching_unless_asked(run, transport):
+    _twin(transport).best_action([rc.target("Churn", "No")], rows=[{"tenure": 3}])
+
+    assert "matchMode" not in _scenario(run)["targets"][0]
+
+
+def test_an_explicit_match_is_sent_even_when_it_is_the_static_default(run, transport):
+    _twin(transport).best_action([rc.target("Churn", "No", match="tolerance")], rows=[{"tenure": 3}])
+
+    assert _scenario(run)["targets"][0]["matchMode"] == "tolerance"
 
 
 def test_target_rejects_what_the_solver_cannot_read():

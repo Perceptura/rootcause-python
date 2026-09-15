@@ -46,12 +46,18 @@ test:
     # The scenario-shape parity tests read rootcause-backend's models to check the
     # SDK sends no key pydantic would drop, and skip when it is absent. Fetching
     # only that directory needs this project on rootcause-backend's CI_JOB_TOKEN
-    # allowlist; until it is there the clone 403s and those tests skip, so the
-    # message below is the difference between "skipped" and "nothing to check".
+    # allowlist. Until that is granted the clone 403s and those tests skip, which
+    # is fine on a branch and not fine on anything that publishes — so a tag or
+    # the default branch sets PARITY_REQUIRED and fails instead.
     - |
-      if git clone --depth 1 --filter=blob:none --sparse           "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/perceptura/rootcause-backend.git"           ../rootcause-backend 2>/dev/null; then
+      CLONE_URL="https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/perceptura/rootcause-backend.git"
+      if git clone --depth 1 --filter=blob:none --sparse "$CLONE_URL" ../rootcause-backend; then
         git -C ../rootcause-backend sparse-checkout set src/rootcause/models
         echo "rootcause-backend models fetched: scenario-shape parity tests will run."
+      elif [ "$PARITY_REQUIRED" = "true" ]; then
+        echo "Could not clone rootcause-backend, and this pipeline requires the parity tests."
+        echo "Add this project to rootcause-backend's CI_JOB_TOKEN allowlist."
+        exit 1
       else
         echo "WARNING: could not clone rootcause-backend (add this project to its CI_JOB_TOKEN allowlist)."
         echo "WARNING: the scenario-shape parity tests will SKIP, so nothing checks the SDK against its models."
@@ -60,7 +66,11 @@ test:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_TAG =~ /^[0-9]+\.[0-9]+\.[0-9]+([ab]|rc)?[0-9]*$/
+      variables:
+        PARITY_REQUIRED: "true"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      variables:
+        PARITY_REQUIRED: "true"
 
 lint:
   stage: test
@@ -68,9 +78,10 @@ lint:
   script:
     - pip install ruff
     - ruff check rootcause tests
-  # Eight findings left, all judgement calls rather than mechanical: three blind
-  # excepts that are deliberate display fallbacks, two mutable class defaults, and
-  # three test smells. Non-gating until they are decided one way or the other.
+  # Eight findings left, all judgement calls rather than mechanical: two blind
+  # excepts and a try/except/pass in the display fallbacks, two mutable class
+  # defaults, a startswith pair, and two test smells. Non-gating until they are
+  # decided one way or the other.
   allow_failure: true
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"

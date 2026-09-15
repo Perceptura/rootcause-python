@@ -244,7 +244,7 @@ def target(
     variable: str,
     value: Any,
     *,
-    match: str = "tolerance",
+    match: str | None = None,
     tolerance: float | None = None,
     tolerance_type: str | None = None,
     at: int | None = None,
@@ -258,6 +258,8 @@ def target(
         value: The value to reach.
         match: How a prediction is judged against it: `tolerance` for a band
             around the value, `orMore` for at-least, `orLess` for at-most.
+            Leave it out and each twin decides: a static twin uses a tolerance
+            band, and a temporal one keeps its aggregation's own rule.
         tolerance: Width of the band when `match="tolerance"`. 0 or omitted
             means an exact match.
         tolerance_type: `absolute` units, or `percentage` of the target.
@@ -275,7 +277,7 @@ def target(
     """
     if not str(variable).strip():
         raise InvalidArgumentError("A target needs the variable it wants to move")
-    if str(match).lower() not in _MATCH_MODES:
+    if match is not None and str(match).lower() not in _MATCH_MODES:
         raise InvalidArgumentError(f'match="{match}" must be one of tolerance, orMore, orLess')
     if tolerance is not None and _number(tolerance, "tolerance") < 0:
         raise InvalidArgumentError(f"tolerance takes a width of 0 or more, not {tolerance!r}")
@@ -286,11 +288,9 @@ def target(
     if str(mode) not in _TARGET_MODES:
         raise InvalidArgumentError(f'mode="{mode}" must be one of {", ".join(sorted(_TARGET_MODES))}')
 
-    spec: dict[str, Any] = {
-        "variable": variable,
-        "value": value,
-        "matchMode": _MATCH_MODES[str(match).lower()],
-    }
+    spec: dict[str, Any] = {"variable": variable, "value": value}
+    if match is not None:
+        spec["matchMode"] = _MATCH_MODES[str(match).lower()]
     if tolerance is not None:
         spec["toleranceValue"] = _number(tolerance, "tolerance")
     if tolerance_type is not None:

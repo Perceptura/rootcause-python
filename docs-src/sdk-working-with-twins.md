@@ -159,7 +159,7 @@ Static twins need `rows=`, the baseline states to improve — one row per starti
 >>> twin.best_action([rc.target("revenue", 1.2e6, match="orMore", at=1780272000000)], horizon=12)
 ```
 
-`match=` decides what counts as arriving — `tolerance` for a band around the value (widened with `tolerance=`), `orMore` for at-least, `orLess` for at-most — and applies on every twin kind. Say nothing and each kind keeps its own rule: a 10% band on a static or point target, at-least on a cumulative one. `max_changes=` caps how many variables one answer may touch, `constraints=` locks what the business cannot move, and panel twins take `environments=`.
+`match=` decides what counts as arriving — `tolerance` for a band around the value (widened with `tolerance=`), `orMore` for at-least, `orLess` for at-most — and applies on every twin kind. Leave it out and nothing is sent, so each kind keeps its own rule: a tolerance band on a static twin, a 10% band on a temporal `point` or `mean` target, and at-least on a `cumulative` one. `max_changes=` caps how many variables one answer may touch, `constraints=` locks what the business cannot move, and panel twins take `environments=`.
 
 ### Diagnosis
 

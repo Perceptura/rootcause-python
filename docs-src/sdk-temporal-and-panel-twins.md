@@ -234,7 +234,7 @@ A multi-environment **static** panel is the exception: it has rows, so it predic
 
 **`monitor` is the one that only exists here.** The causal health monitor watches a series over time, so the two static kinds have no version of it at all rather than a differently-named one; `anomalies` is what scans a batch of rows on those.
 
-**`best_action` splits on the time axis, not the panel.** Static kinds need `rows=`, the baseline states to improve — a multi-environment static panel included, where the same rows are solved in every environment in scope. Temporal kinds solve from the twin's own trajectory and take no rows, so passing them is refused rather than dropped; say when a target has to be met with `rc.target(..., at=timestamp)` instead. The same split decides `rc.target`: `at=`, `aggregation=` and `mode=` are temporal, and a static twin refuses them rather than sending something the engine ignores.
+**`best_action` splits on the time axis, not the panel.** Static kinds need `rows=`, the baseline states to improve — a multi-environment static panel included, where the same rows are solved in every environment in scope. Temporal kinds solve from the twin's own trajectory and take no rows, so passing them is refused rather than dropped; say when a target has to be met with `rc.target(..., at=timestamp)` instead. The same split decides `rc.target`: `at=`, `aggregation=` and `mode=` are temporal, and a static twin refuses any of them it is actually given rather than sending something the engine ignores. It refuses what you name, not what you leave alone, so the defaults never trip it.
 
 Four arguments only exist because there is a time axis, and passing one to a static twin is refused rather than dropped:
 
