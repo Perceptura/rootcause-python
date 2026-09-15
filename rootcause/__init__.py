@@ -42,7 +42,7 @@ from rootcause.errors import (
     RootCauseError,
 )
 from rootcause.graph import Graph
-from rootcause.interventions import add, adjust_prob, at, mean_metrics, members, metric, objective, pct, prob, range, set  # noqa: A004
+from rootcause.interventions import add, adjust_prob, at, mean_metrics, members, metric, objective, pct, prob, range, set, target  # noqa: A004
 from rootcause.ontology import AnchorSqlResult, Ontology
 from rootcause.results import ForecastResult, PredictionResult, SampleDraws, ScoreResult, SimulationResult, UpdateResult
 from rootcause.twin import Twin
@@ -289,6 +289,7 @@ __all__ = [
     "prob",
     "render_widget",
     "set",
+    "target",
     "workspace",
     "workspaces",
     "__version__",

@@ -1,5 +1,5 @@
 """The scenario families that answer a question outright: predict, explain,
-optimise, root_cause, anomalies.
+optimise, best_action, root_cause, anomalies, monitor.
 
 Each family is spelled differently per twin kind, and the platform answers a
 wrong spelling with a 422 rather than a wrong number, so the type mapping is
@@ -14,7 +14,9 @@ from rootcause.errors import InvalidArgumentError, RootCauseError
 from rootcause.results import PredictionResult, SimulationResult
 from rootcause.twin import (
     ANOMALY_TYPES,
+    COUNTERFACTUAL_TYPES,
     EXPLANATION_TYPES,
+    HEALTH_MONITOR_TYPES,
     OPTIMISATION_TYPES,
     ROOT_CAUSE_TYPES,
     Twin,
@@ -436,3 +438,191 @@ def test_an_unknown_kind_says_so_rather_than_guessing(api, transport):
     with pytest.raises(RootCauseError, match="quantum"):
         twin.explain(effect="y")
     assert api.requests == []
+
+
+# ── best action ─────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "kind,expected",
+    [
+        ("static", "counterfactual"),
+        ("temporal", "temporal_counterfactual"),
+        ("multi-environment-static", "panel_counterfactual"),
+        ("multi-environment-temporal", "panel_counterfactual"),
+    ],
+)
+def test_best_action_maps_the_scenario_type_per_kind(run, transport, kind, expected):
+    twin = _twin(transport, kind)
+    rows = [{"tenure": 3}] if kind == "static" else None
+
+    twin.best_action([rc.target("Churn", "No")], rows=rows)
+
+    assert _scenario(run)["type"] == expected
+
+
+def test_best_action_carries_the_static_baselines_and_the_solver_limits(run, transport):
+    _twin(transport).best_action(
+        [rc.target("Churn", "No")],
+        rows=[{"tenure": 3}, {"tenure": 40}],
+        max_changes=2,
+        constraints={"tenure": {"type": "fixed"}},
+    )
+
+    assert _scenario(run) == {
+        "type": "counterfactual",
+        "targets": [
+            {
+                "variable": "Churn",
+                "value": "No",
+                "matchMode": "tolerance",
+                "aggregation": "point",
+                "targetMode": "absolute",
+            }
+        ],
+        "maxChanges": 2,
+        "samples": [{"tenure": 3}, {"tenure": 40}],
+        "constraints": {"tenure": {"type": "fixed"}},
+    }
+
+
+def test_best_action_takes_a_horizon_on_a_temporal_twin(run, transport):
+    _twin(transport, "temporal").best_action(
+        [rc.target("revenue", 1200.0, match="orMore", at=1780272000000)], horizon=12
+    )
+
+    scenario = _scenario(run)
+    assert scenario["forecastHorizon"] == 12
+    assert scenario["targets"][0]["matchMode"] == "orMore"
+    assert scenario["targets"][0]["timestamp"] == 1780272000000
+    assert "samples" not in scenario
+
+
+def test_best_action_scopes_a_panel_twin_to_the_environments_named(run, transport):
+    _twin(transport, "multi-environment-temporal").best_action(
+        [rc.target("revenue", 1200.0)], environments=["london", "berlin"], horizon=6
+    )
+
+    assert _scenario(run)["environments"] == ["london", "berlin"]
+
+
+def test_best_action_draws_its_own_baselines_on_a_multi_environment_static_twin(run, transport):
+    _twin(transport, "multi-environment-static").best_action([rc.target("Churn", "No")])
+
+    scenario = _scenario(run)
+    assert scenario["type"] == "panel_counterfactual"
+    assert "samples" not in scenario
+
+
+@pytest.mark.parametrize(
+    "kind,kwargs,message",
+    [
+        ("static", {"targets": []}, "at least one target"),
+        ("static", {"targets": [{"value": 1}]}, "needs the variable"),
+        ("static", {"targets": [rc.target("Churn", "No")]}, "needs rows="),
+        (
+            "temporal",
+            {"targets": [rc.target("revenue", 1.0)], "rows": [{"a": 1}]},
+            "only applies to static twins",
+        ),
+        (
+            "multi-environment-static",
+            {"targets": [rc.target("Churn", "No")], "horizon": 4},
+            "only applies to temporal twins",
+        ),
+        (
+            "static",
+            {"targets": [rc.target("Churn", "No")], "rows": [{"a": 1}], "environments": ["uk"]},
+            "only applies to panel twins",
+        ),
+    ],
+)
+def test_best_action_rejects_an_unusable_setup_before_any_request(api, transport, kind, kwargs, message):
+    with pytest.raises((RootCauseError, InvalidArgumentError), match=message):
+        _twin(transport, kind).best_action(**kwargs)
+    assert api.requests == []
+
+
+def test_target_rejects_what_the_solver_cannot_read():
+    for kwargs, message in [
+        ({"variable": "", "value": 1}, "needs the variable"),
+        ({"variable": "x", "value": 1, "match": "nearly"}, "must be one of tolerance"),
+        ({"variable": "x", "value": 1, "tolerance": -1}, "0 or more"),
+        ({"variable": "x", "value": 1, "aggregation": "median"}, "must be one of"),
+        ({"variable": "x", "value": 1, "mode": "sideways"}, "must be one of"),
+    ]:
+        with pytest.raises(InvalidArgumentError, match=message):
+            rc.target(**kwargs)
+
+
+# ── causal health monitor ───────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "kind,expected",
+    [("temporal", "causal_health_monitor"), ("multi-environment-temporal", "panel_causal_health_monitor")],
+)
+def test_monitor_maps_the_scenario_type_per_kind(run, transport, kind, expected):
+    _twin(transport, kind).monitor([{"t": 1, "revenue": 10}])
+
+    assert _scenario(run)["type"] == expected
+
+
+def test_monitor_watches_observed_rows_with_the_detector_settings(run, transport):
+    _twin(transport, "temporal").monitor(
+        [{"t": 1}, {"t": 2}], start_step=2, end_step=9, target_fpr=0.01,
+        parent_tolerance_sigma=1.5, auto_rca=False,
+    )
+
+    assert _scenario(run) == {
+        "type": "causal_health_monitor",
+        "dataSource": "observed",
+        "targetFpr": 0.01,
+        "parentToleranceSigma": 1.5,
+        "autoRca": False,
+        "samples": [{"t": 1}, {"t": 2}],
+        "startStep": 2,
+        "endStep": 9,
+    }
+
+
+def test_monitor_watches_the_twins_own_forecast_when_given_a_horizon(run, transport):
+    _twin(transport, "temporal").monitor(horizon=30)
+
+    scenario = _scenario(run)
+    assert scenario["dataSource"] == "forecast"
+    assert scenario["forecastHorizon"] == 30
+    assert "samples" not in scenario
+
+
+def test_monitor_takes_per_environment_rows_on_a_panel_twin(run, transport):
+    _twin(transport, "multi-environment-temporal").monitor(
+        {"london": [{"t": 1}], "berlin": [{"t": 1}]}, environments=["london"]
+    )
+
+    scenario = _scenario(run)
+    assert scenario["panelSamples"] == {"london": [{"t": 1}], "berlin": [{"t": 1}]}
+    assert scenario["environments"] == ["london"]
+
+
+@pytest.mark.parametrize(
+    "kind,kwargs,message",
+    [
+        ("static", {"samples": [{"t": 1}]}, "needs a temporal or panel-temporal twin"),
+        ("multi-environment-static", {"samples": [{"t": 1}]}, "needs a temporal or panel-temporal twin"),
+        ("temporal", {}, "needs something to watch"),
+        ("temporal", {"samples": [{"t": 1}], "horizon": 5}, "watches one or the other"),
+        ("temporal", {"samples": [{"t": 1}], "environments": ["uk"]}, "only applies to panel twins"),
+        ("temporal", {"samples": [{"t": 1}], "target_fpr": 0.9}, "between 0.0001 and 0.1"),
+    ],
+)
+def test_monitor_rejects_an_unusable_setup_before_any_request(api, transport, kind, kwargs, message):
+    with pytest.raises((RootCauseError, InvalidArgumentError), match=message):
+        _twin(transport, kind).monitor(**kwargs)
+    assert api.requests == []
+
+
+def test_every_wizard_family_has_a_verb():
+    for family in (COUNTERFACTUAL_TYPES,):
+        assert sorted(family) == sorted(KINDS)
+    assert sorted(HEALTH_MONITOR_TYPES) == ["multi-environment-temporal", "temporal"]

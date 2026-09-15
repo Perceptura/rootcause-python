@@ -46,7 +46,7 @@ AnchorSqlResult(rows=134)
 >>> result.units         # unit id per column, where the ontology knows one
 ```
 
-The reserved anchors `entity`, `time` and `location` take grains, aggregates group and filter as in SQL, and metrics defined in the workspace go by name verbatim:
+The reserved anchors are `entity`, `time` and `location`; `time` and `location` additionally take grains (`time(month)`, `location(country)`) while `entity` is used bare. Aggregates group and filter as in SQL, and metrics defined in the workspace go by name verbatim:
 
 ```python
 >>> onto.sql('SELECT "customer", sum("Revenue") GROUP BY "customer" ORDER BY sum("Revenue") DESC').to_frame()
@@ -71,7 +71,6 @@ A refused statement raises `AnchorSqlError` carrying the structured compile erro
 ```python
 >>> onto.sql('SELECT "Revenu"')
 AnchorSqlError: [unknown_concept] Unknown concept "Revenu". Closest matches: Revenue
-Try: SELECT "Revenue"
 ```
 
 ## Over the REST API

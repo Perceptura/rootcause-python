@@ -411,7 +411,9 @@ class Workspace:
 
         Args:
             name: Name for the connector.
-            type: Connector type, for example `postgresql` or `snowflake`.
+            type: Connector type, for example `PostgreSQL` or `Snowflake`.
+                One of the platform's connector type ids, matched exactly: the
+                value is case-sensitive.
             **credentials: The connector's credentials. Stored encrypted, and
                 never returned by the API.
 

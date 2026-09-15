@@ -64,7 +64,7 @@ The environments really are heterogeneous: Berlin runs at more than double Londo
 
 ## Forecasts that explain themselves
 
-`forecast` runs per environment. `environments=` narrows which, `aggregate=` ("sum", "avg", "min", "max") adds a combined series, and `origin_timestamp` (ms epoch) anchors the start, which is how a backtest aligns a forecast against months the twin never saw:
+`forecast` runs per environment. `environments=` narrows which. Every panel forecast carries a combined series across environments, averaged by default; `aggregate=` ("sum", "avg", "min", "max") changes which statistic it uses, e.g. "sum" for market totals. `origin_timestamp` (ms epoch) anchors the start, which is how a backtest aligns a forecast against months the twin never saw:
 
 ```python
 >>> fc = twin.forecast(horizon=6, targets=["revenue"], aggregate="sum")
@@ -117,7 +117,7 @@ Without `rc.at`, an intervention on a temporal twin applies as the engine's defa
 
 ## Working with a subset of environments
 
-`twin.env(...)` pins a handle to some of the panel's environments. Its `graph` re-aggregates the causal adjacency over just those environments — edges carry `agreementRate`, the share of the subset's environments in which discovery found the relationship — and every simulation on the handle is scoped automatically:
+`twin.env(...)` pins a handle to some of the panel's environments. Its `graph` re-aggregates the causal adjacency over just those environments — edges carry `agreementRate`, the share of the subset's *eligible* environments — those containing both variables — in which discovery found the relationship — and every simulation on the handle is scoped automatically:
 
 ```python
 >>> eu = twin.env("london", "berlin")
@@ -219,6 +219,8 @@ Forecasting and scheduled interventions are what these kinds are usually reached
 | `optimise` | `optimisation` | `temporal_optimisation` | `panel_optimisation` | `panel_optimisation` |
 | `root_cause` | `root_cause_analysis` | `temporal_root_cause_analysis` | `static_panel_root_cause_analysis` | `panel_root_cause_analysis` |
 | `anomalies` | `anomaly_detection` | `temporal_anomaly_detection` | `static_panel_anomaly_detection` | `panel_anomaly_detection` |
+| `best_action` | `counterfactual` | `temporal_counterfactual` | `panel_counterfactual` | `panel_counterfactual` |
+| `monitor` | not available | `causal_health_monitor` | not available | `panel_causal_health_monitor` |
 
 **Prediction is the one that does not carry over.** It answers for a row of inputs, which a series does not have; a temporal twin projects forward with `forecast` instead, and says so rather than guessing:
 
@@ -230,15 +232,20 @@ at a time and needs a static twin. Use forecast() to project a temporal twin for
 
 A multi-environment **static** panel is the exception: it has rows, so it predicts, and the scenario is plain `prediction` with no panel variant.
 
-Three arguments only exist because there is a time axis, and passing one to a static twin is refused rather than dropped:
+**`monitor` is the one that only exists here.** The causal health monitor watches a series over time, so the two static kinds have no version of it at all rather than a differently-named one; `anomalies` is what scans a batch of rows on those.
+
+**`best_action` inverts along the way.** On a static twin it needs `rows=`, the baseline states to improve. Temporal and panel twins solve from the twin's own trajectory and take no rows, so passing them is refused rather than dropped; say when a target has to be met with `rc.target(..., at=timestamp)` instead.
+
+Four arguments only exist because there is a time axis, and passing one to a static twin is refused rather than dropped:
 
 ```python
 >>> twin.optimise([objective], decision_vars=["price"], horizon=12)
+>>> twin.best_action([rc.target("revenue", 1.2e6, match="orMore")], horizon=12)
 >>> twin.root_cause("revenue", observed, timestep=17)
 >>> twin.anomalies(observed, start_step=4, end_step=9)
 ```
 
-`horizon` is **required** for a temporal optimization, which plans across steps rather than picking one setting; it is optional on a panel and refused on a static twin.
+`horizon` is **required** for a temporal optimization, which plans across steps rather than picking one setting; it is optional on a panel, optional for `best_action`, and refused on a static twin.
 
 ### Diagnosing environments
 
@@ -249,7 +256,12 @@ Three arguments only exist because there is a time axis, and passing one to a st
 >>> twin.anomalies({"london": london_rows, "berlin": berlin_rows})
 ```
 
-The mapping becomes `panelSamples` on the scenario, keyed by environment. A flat list becomes `samples`, which the engine shares across the environments in scope.
+The mapping becomes `panelSamples` on the scenario, keyed by environment. A flat list becomes `samples`, which the engine shares across the environments in scope. `monitor` takes the same two shapes when it is watching observed rows:
+
+```python
+>>> twin.monitor({"london": london_rows, "berlin": berlin_rows})
+>>> twin.monitor(horizon=30)                                    # watch the forecast instead
+```
 
 ### Every family is scoped by a subset or a group
 
@@ -259,6 +271,7 @@ The environment handles from the two sections above carry the whole verb set, no
 >>> twin.env("london", "berlin").explain(effect="revenue")
 >>> eu = twin.group("EU stores")
 >>> eu.anomalies(observed)
+>>> eu.monitor(observed)
 >>> eu.optimise([objective], decision_vars=["price"], horizon=6)
 >>> _.environment_groups
 [{'id': 'VSaJCq7nDtRfXbW2hLpKy', 'name': 'EU stores', 'envKeys': ['london', 'berlin'], 'droppedEnvKeys': []}]

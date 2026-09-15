@@ -446,12 +446,13 @@ class Ontology:
         quoted name, and the ontology plans the joins across every mapped
         source — there are no tables to FROM and no JOINs to write
         (`FROM source:"name"` exists only to narrow scope). The reserved
-        anchors `entity`, `time` and `location` take grains like `time(month)`
-        or `location(country)`; aggregates with GROUP BY / HAVING / ORDER BY /
-        LIMIT work as in SQL, and metrics defined in the workspace are
-        referenced by name verbatim. `SHOW CONCEPTS`, `SHOW METRICS`,
-        `SHOW SOURCES` and `DESCRIBE "x"` answer metadata about what there is
-        to query.
+        anchors are `entity`, `time` and `location`; `time` and `location`
+        additionally take grains like `time(month)` or `location(country)`,
+        while `entity` takes no arguments; aggregates with
+        GROUP BY / HAVING / ORDER BY / LIMIT work as in SQL, and metrics
+        defined in the workspace are referenced by name verbatim.
+        `SHOW CONCEPTS`, `SHOW METRICS`, `SHOW SOURCES` and `DESCRIBE "x"`
+        answer metadata about what there is to query.
 
         ```python
         onto.sql('SELECT "Monthly Charges" WHERE "Contract" = \\'Month-to-month\\'')

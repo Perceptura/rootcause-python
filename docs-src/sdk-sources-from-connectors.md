@@ -19,7 +19,7 @@ Credentials are stored encrypted server-side and are never returned by the API â
 
 ## Browse the schema
 
-The same hierarchy the UI shows â€” for SQL connectors: schemas, then tables, then columns (Snowflake adds warehouses and databases above them):
+The same hierarchy the UI shows, which differs by connector: PostgreSQL browses schemas, then tables, then columns; MySQL and ClickHouse browse databases, then tables, then columns; Snowflake adds warehouses and databases above schemas. The `hierarchy` field in the browse response always reports the levels for the connector you are on:
 
 ```python
 >>> connector.browse("tables", schema="public")
@@ -86,7 +86,7 @@ Twin('Store weeks', kind=static, version=Z08TxdUFFQPTWlvNSQH2r, state=trained)
 0  avg_revenue  517.44498    537.604876
 ```
 
-`intervene` is one of eight verbs a trained twin answers: `predict` for a specific case, `explain` for why, `optimise` for what to change, `root_cause` and `anomalies` for diagnosis. [Asking a trained twin a question](sdk-working-with-twins.md#asking-a-trained-twin-a-question) covers them all.
+`intervene` is one of nine verbs a trained twin answers: `predict` for a specific case, `explain` for why, `optimise` for what to change, `best_action` for the least that gets you there, `root_cause` and `anomalies` for diagnosis, `monitor` for what is brewing. [Asking a trained twin a question](sdk-working-with-twins.md#asking-a-trained-twin-a-question) covers them all.
 
 The loop from here is the same as any other source: re-import or sync on a schedule, `twin.update()` to fold new rows in ([Working with Digital Twins](sdk-working-with-twins.md#keeping-a-trained-model-current)), and [Temporal and Panel Twins](sdk-temporal-and-panel-twins.md) for time series and per-environment modelling.
 

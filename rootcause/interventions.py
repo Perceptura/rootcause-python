@@ -235,6 +235,71 @@ def objective(
     return spec
 
 
+_MATCH_MODES = {"tolerance": "tolerance", "ormore": "orMore", "orless": "orLess"}
+_TARGET_MODES = {"absolute", "relative_percentage", "relative_absolute"}
+_AGGREGATIONS = {"point", "mean", "cumulative"}
+
+
+def target(
+    variable: str,
+    value: Any,
+    *,
+    match: str = "tolerance",
+    tolerance: float | None = None,
+    tolerance_type: str | None = None,
+    at: int | None = None,
+    aggregation: str = "point",
+    mode: str = "absolute",
+) -> dict[str, Any]:
+    """An outcome for `best_action()` to reach: what value, and what counts as reaching it.
+
+    Args:
+        variable: The outcome variable to land on.
+        value: The value to reach.
+        match: How a prediction is judged against it: `tolerance` for a band
+            around the value, `orMore` for at-least, `orLess` for at-most.
+        tolerance: Width of the band when `match="tolerance"`. 0 or omitted
+            means an exact match.
+        tolerance_type: `absolute` units, or `percentage` of the target.
+        at: Temporal and panel twins: the timestamp (ms epoch) to reach it by.
+        aggregation: Temporal and panel twins: whether the target applies at a
+            `point`, to the `mean` over the horizon, or to the `cumulative` total.
+        mode: Temporal and panel twins: read `value` as an `absolute` level, or
+            as `relative_percentage` / `relative_absolute` against the baseline.
+
+    Examples:
+        >>> rc.target("Churn", "No")
+        >>> rc.target("revenue", 1.2e6, match="orMore", at=1780272000000)
+    """
+    if not str(variable).strip():
+        raise InvalidArgumentError("A target needs the variable it wants to move")
+    if str(match).lower() not in _MATCH_MODES:
+        raise InvalidArgumentError(f'match="{match}" must be one of tolerance, orMore, orLess')
+    if tolerance is not None and _number(tolerance, "tolerance") < 0:
+        raise InvalidArgumentError(f"tolerance takes a width of 0 or more, not {tolerance!r}")
+    if tolerance_type is not None and str(tolerance_type) not in {"absolute", "percentage"}:
+        raise InvalidArgumentError(f'tolerance_type="{tolerance_type}" must be either absolute or percentage')
+    if str(aggregation) not in _AGGREGATIONS:
+        raise InvalidArgumentError(f'aggregation="{aggregation}" must be one of {", ".join(sorted(_AGGREGATIONS))}')
+    if str(mode) not in _TARGET_MODES:
+        raise InvalidArgumentError(f'mode="{mode}" must be one of {", ".join(sorted(_TARGET_MODES))}')
+
+    spec: dict[str, Any] = {
+        "variable": variable,
+        "value": value,
+        "matchMode": _MATCH_MODES[str(match).lower()],
+        "aggregation": str(aggregation),
+        "targetMode": str(mode),
+    }
+    if tolerance is not None:
+        spec["toleranceValue"] = _number(tolerance, "tolerance")
+    if tolerance_type is not None:
+        spec["toleranceType"] = str(tolerance_type)
+    if at is not None:
+        spec["timestamp"] = at
+    return spec
+
+
 def mean_metrics(outcomes: list[str]) -> list[dict[str, Any]]:
     """Mean-of-column metrics for each outcome variable, the common case.
 

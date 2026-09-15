@@ -1,6 +1,6 @@
 # Python SDK: Interactive Apps in Notebooks
 
-Every RootCause MCP tool ships with an interactive app: the consoles that render inline when you use RootCause from Claude, ChatGPT, or Copilot. The SDK mounts those same apps under notebook cells. Nothing is re-implemented per widget; whatever the platform can render in a chat client, your notebook can render too, and every control round-trips live through the platform with your session's credentials.
+Many RootCause MCP tools ship with an interactive app: the consoles that render inline when you use RootCause from Claude, ChatGPT, or Copilot. The SDK mounts those same apps under notebook cells. Nothing is re-implemented per widget; whatever the platform can render in a chat client, your notebook can render too, and every control round-trips live through the platform with your session's credentials.
 
 ## Install
 
