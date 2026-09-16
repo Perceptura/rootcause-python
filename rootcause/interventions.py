@@ -20,7 +20,7 @@ def _number(value: Any, argument: str) -> float:
         raise InvalidArgumentError(f"{argument} takes a number, not {value!r}") from None
 
 
-def set(value: float | int | str | bool) -> dict[str, Any]:  # noqa: A001
+def set(value: float | str | bool) -> dict[str, Any]:
     """Set the variable to an exact value.
 
     A bare value anywhere `do=` is accepted means the same thing.
@@ -129,7 +129,7 @@ def at(
     return scheduled
 
 
-def range(from_: float | None = None, to: float | None = None, *, steps: int | None = None) -> dict[str, Any]:  # noqa: A001
+def range(from_: float | None = None, to: float | None = None, *, steps: int | None = None) -> dict[str, Any]:
     """Sweep a numeric variable across a grid instead of pinning it: rc.range(15, 30).
 
     A scenario carries at most one range intervention; read the curves back with
@@ -232,6 +232,75 @@ def objective(
         spec["unit"] = unit
     if weight is not None:
         spec["weight"] = _number(weight, "weight")
+    return spec
+
+
+_MATCH_MODES = {"tolerance": "tolerance", "ormore": "orMore", "orless": "orLess"}
+_TARGET_MODES = {"absolute", "relative_percentage", "relative_absolute"}
+_AGGREGATIONS = {"point", "mean", "cumulative"}
+
+
+def target(
+    variable: str,
+    value: Any,
+    *,
+    match: str | None = None,
+    tolerance: float | None = None,
+    tolerance_type: str | None = None,
+    at: int | None = None,
+    aggregation: str = "point",
+    mode: str = "absolute",
+) -> dict[str, Any]:
+    """An outcome for `best_action()` to reach: what value, and what counts as reaching it.
+
+    Args:
+        variable: The outcome variable to land on.
+        value: The value to reach.
+        match: How a prediction is judged against it: `tolerance` for a band
+            around the value, `orMore` for at-least, `orLess` for at-most.
+            Leave it out and each twin decides: a static twin uses a tolerance
+            band, and a temporal one keeps its aggregation's own rule.
+        tolerance: Width of the band when `match="tolerance"`. 0 or omitted
+            means an exact match.
+        tolerance_type: `absolute` units, or `percentage` of the target.
+        at: Temporal twins: the timestamp (ms epoch) to reach it by.
+        aggregation: Temporal twins: whether the target applies at a `point`,
+            to the `mean` over the horizon, or to the `cumulative` total. Only
+            sent when it is not `point`, so a static target stays static.
+        mode: Temporal twins: read `value` as an `absolute` level, or as
+            `relative_percentage` / `relative_absolute` against the baseline.
+            Only sent when it is not `absolute`.
+
+    Examples:
+        >>> rc.target("Churn", "No")
+        >>> rc.target("revenue", 1.2e6, match="orMore", at=1780272000000)
+    """
+    if not str(variable).strip():
+        raise InvalidArgumentError("A target needs the variable it wants to move")
+    if match is not None and str(match).lower() not in _MATCH_MODES:
+        raise InvalidArgumentError(f'match="{match}" must be one of tolerance, orMore, orLess')
+    if tolerance is not None and _number(tolerance, "tolerance") < 0:
+        raise InvalidArgumentError(f"tolerance takes a width of 0 or more, not {tolerance!r}")
+    if tolerance_type is not None and str(tolerance_type) not in {"absolute", "percentage"}:
+        raise InvalidArgumentError(f'tolerance_type="{tolerance_type}" must be either absolute or percentage')
+    if str(aggregation) not in _AGGREGATIONS:
+        raise InvalidArgumentError(f'aggregation="{aggregation}" must be one of {", ".join(sorted(_AGGREGATIONS))}')
+    if str(mode) not in _TARGET_MODES:
+        raise InvalidArgumentError(f'mode="{mode}" must be one of {", ".join(sorted(_TARGET_MODES))}')
+
+    spec: dict[str, Any] = {"variable": variable, "value": value}
+    if match is not None:
+        spec["matchMode"] = _MATCH_MODES[str(match).lower()]
+    if tolerance is not None:
+        spec["toleranceValue"] = _number(tolerance, "tolerance")
+    if tolerance_type is not None:
+        spec["toleranceType"] = str(tolerance_type)
+    if at is not None:
+        spec["timestamp"] = at
+    if str(aggregation) != "point":
+        spec["aggregation"] = str(aggregation)
+    if str(mode) != "absolute":
+        spec["targetMode"] = str(mode)
     return spec
 
 

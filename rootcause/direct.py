@@ -1,6 +1,6 @@
 import hashlib
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from rootcause import _guard
 from rootcause._http import Transport, expect, poll_job

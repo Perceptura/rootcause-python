@@ -6,7 +6,7 @@ three producers, so a link from `.link()`, a widget's "Open in RootCause"
 and the app itself all land on the same page.
 """
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 if TYPE_CHECKING:

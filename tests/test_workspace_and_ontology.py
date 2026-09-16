@@ -1,6 +1,11 @@
 import pytest
 
-from rootcause.errors import AnchorSqlError, InvalidArgumentError, NotFoundInWorkspaceError, RootCauseError
+from rootcause.errors import (
+    AnchorSqlError,
+    InvalidArgumentError,
+    NotFoundInWorkspaceError,
+    RootCauseError,
+)
 from rootcause.ontology import Ontology
 from rootcause.workspace import Workspace
 

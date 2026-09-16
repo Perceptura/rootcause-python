@@ -8,10 +8,11 @@ import socket
 import sys
 import time
 import webbrowser
+from collections.abc import Callable
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import urlencode
 
 import httpx

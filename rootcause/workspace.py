@@ -2,7 +2,8 @@
 
 import difflib
 import time
-from typing import TYPE_CHECKING, Any, Callable, Iterator
+from collections.abc import Callable, Iterator
+from typing import TYPE_CHECKING, Any
 
 from rootcause import _guard
 from rootcause._http import Transport, expect, poll_job
@@ -148,7 +149,7 @@ class Source:
         return f"Source({self.name!r}, id={self.id})"
 
 
-class DataView:
+class Dataset:
     """A derived, queryable dataset built from one or more sources."""
 
     def __init__(self, transport: Transport, workspace_id: str, doc: dict[str, Any]) -> None:
@@ -212,7 +213,7 @@ class DataView:
         return list(envelope.get("data", []))
 
     def __repr__(self) -> str:
-        return f"DataView({self.name!r}, id={self.id})"
+        return f"Dataset({self.name!r}, id={self.id})"
 
 
 class Connector:
@@ -386,7 +387,7 @@ class Workspace:
 
     @property
     def datasets(self) -> _Collection:
-        collection = _Collection(lambda: self._list("/datasets"), lambda doc: DataView(self._transport, self.id, doc))
+        collection = _Collection(lambda: self._list("/datasets"), lambda doc: Dataset(self._transport, self.id, doc))
         collection.kind = "dataset"
         return collection
 
@@ -411,7 +412,9 @@ class Workspace:
 
         Args:
             name: Name for the connector.
-            type: Connector type, for example `postgresql` or `snowflake`.
+            type: Connector type, for example `PostgreSQL` or `Snowflake`.
+                One of the platform's connector type ids, matched exactly: the
+                value is case-sensitive.
             **credentials: The connector's credentials. Stored encrypted, and
                 never returned by the API.
 
@@ -426,7 +429,7 @@ class Workspace:
         doc = envelope.get("data", envelope)
         return Connector(self._transport, self.id, doc)
 
-    def dataset(self, needle: str) -> DataView:
+    def dataset(self, needle: str) -> Dataset:
         return self.datasets[needle]
 
     def source(self, needle: str) -> Source:

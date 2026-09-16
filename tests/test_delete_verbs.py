@@ -4,7 +4,7 @@ import pytest
 
 from rootcause.errors import RootCauseApiError
 from rootcause.twin import Twin
-from rootcause.workspace import DataView, Source
+from rootcause.workspace import Dataset, Source
 
 WS = "ws1"
 
@@ -27,7 +27,7 @@ def test_source_delete(api, transport):
 
 def test_dataset_delete(api, transport):
     api.on("DELETE", f"/api/v1/workspaces/{WS}/datasets/dv1", None, status=204)
-    DataView(transport, WS, {"id": "dv1"}).delete()
+    Dataset(transport, WS, {"id": "dv1"}).delete()
     assert _deletes(api) == [f"/api/v1/workspaces/{WS}/datasets/dv1"]
 
 

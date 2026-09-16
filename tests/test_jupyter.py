@@ -5,7 +5,6 @@ import pytest
 from rootcause.errors import RootCauseError
 from rootcause.jupyter import DEFAULT_APP_URI, McpGateway
 
-
 TOOLS = {
     "tools": [
         {"name": "query_causal_graph", "_meta": {"ui": {"resourceUri": "ui://widget/twin.html"}}},

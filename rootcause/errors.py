@@ -179,8 +179,12 @@ class AnchorSqlError(RootCauseError):
         candidates (list[dict]): Near-miss suggestions, each with `kind`, `id`,
             `name` and `score`.
         suggested_query (str | None): A corrected statement the engine proposes.
-        per_source (list[dict]): Per-dataset diagnostics when a join could not
-            be planned, each with `datasetId`, `datasetName` and `reason`.
+        per_source (list[dict]): Per-dataset diagnostics, carried by the errors
+            that explain themselves dataset by dataset: `no_join_path` and
+            `pin_no_edge` say why each side could not be joined,
+            `needs_enrichment` and `enrichment_running` say which datasets lack
+            a geo sidecar. Each entry has `datasetId`, `datasetName` and
+            `reason`.
         body (dict): The raw structured error.
     """
 

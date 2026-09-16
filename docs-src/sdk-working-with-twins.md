@@ -74,11 +74,11 @@ New rows landing in the twin's backing source do not require a retrain. `update(
 UpdateResult(status='committed', rows=60)
 ```
 
-The three statuses are the contract: `committed` (new rows folded in), `up_to_date` (nothing new since the last update), and `retrain_required` (the model can't take these rows incrementally — `result.reasons` says why; call `twin.retrain()`). Static and temporal twins assimilate out of the box; panel twins need the v2 panel engine (an opt-in in the twin builder). `twin.update_eligibility` answers the same question read-only, so an orchestrator can decide without starting a job. The full monthly-refresh pattern, including the Airflow shape, is in [Temporal and Panel Twins](sdk-temporal-and-panel-twins.md#monthly-refresh-assimilate-instead-of-retrain).
+The three statuses are the contract: `committed` (new rows folded in), `up_to_date` (nothing new since the last update), and `retrain_required` (the model can't take these rows incrementally — `result.reasons` says why; call `twin.retrain()`). Static and temporal twins assimilate out of the box. Among panel twins, only multi-environment-temporal ones can assimilate, and only when they opt into the v2 panel engine in the twin builder; a multi-environment-static twin has no v2 option and always needs a retrain. `twin.update_eligibility` answers the same question read-only, so an orchestrator can decide without starting a job. The full monthly-refresh pattern, including the Airflow shape, is in [Temporal and Panel Twins](sdk-temporal-and-panel-twins.md#monthly-refresh-assimilate-instead-of-retrain).
 
 ## Asking a trained twin a question
 
-Every simulation family the platform's New Simulation wizard offers has a verb here, and each one blocks until the run completes. Which verb a twin accepts depends on what kind of twin it is, and the SDK refuses the wrong one before submitting anything rather than letting the platform answer with a 422:
+Every simulation family the platform's New Simulation wizard offers has a verb here, and each one blocks until the run completes. Which verb a twin accepts depends on what kind of twin it is, and the SDK refuses the wrong one before submitting anything:
 
 | Question | Verb | Twin kinds |
 | --- | --- | --- |
@@ -87,11 +87,12 @@ Every simulation family the platform's New Simulation wizard offers has a verb h
 | What if we change X? | `intervene` | every kind |
 | Why does this happen? | `explain` | every kind |
 | What should we change? | `optimise` | every kind |
-| How do I reach a goal? | `score` | static |
+| How do I reach a goal? | `best_action` | every kind |
 | Why is this variable broken? | `root_cause` | every kind |
 | Is anything broken at all? | `anomalies` | every kind |
+| How is the system trending, and what is brewing? | `monitor` | temporal, multi-environment temporal |
 
-`intervene`, `forecast` and `score` have sections of their own further down; the rest are covered here.
+`intervene` and `forecast` have sections of their own further down; the rest are covered here. `score` is a row-wise sibling of `best_action` rather than a family of its own, and has its own section too.
 
 ### Prediction
 
@@ -144,6 +145,22 @@ A temporal twin optimizes over a horizon and needs `horizon=`; a static one opti
 
 > A categorical outcome has to be counted, not averaged. `SELECT AVG("Churn")` over a text column is not a number, and the run fails inside the engine rather than at submission. Count the category you care about with `CASE WHEN`, as above.
 
+### Best action
+
+`best_action` is the mirror of `optimise`: instead of pushing an objective as far as it will go, it asks for the least you can change and still arrive. Targets are built with `rc.target`:
+
+```python
+>>> twin.best_action([rc.target("Churn", "No")], rows=at_risk)
+```
+
+Static twins need `rows=`, the baseline states to improve — one row per starting point. A multi-environment static panel takes them too, and solves the same rows in every environment. Temporal twins work from the twin's own trajectory instead and take no rows; there `rc.target(..., at=timestamp)` says when the target has to be met, and `horizon=` bounds how far ahead the solver may act:
+
+```python
+>>> twin.best_action([rc.target("revenue", 1.2e6, match="orMore", at=1780272000000)], horizon=12)
+```
+
+`match=` decides what counts as arriving — `tolerance` for a band around the value (widened with `tolerance=`), `orMore` for at-least, `orLess` for at-most — and applies on every twin kind. Leave it out and nothing is sent, so each kind keeps its own rule: a tolerance band on a static twin, a 10% band on a temporal `point` or `mean` target, and at-least on a `cumulative` one. `max_changes=` caps how many variables one answer may touch, `constraints=` locks what the business cannot move, and panel twins take `environments=`.
+
 ### Diagnosis
 
 Two verbs, and which one you want depends on whether you already know what is wrong. `root_cause` traces one named variable upstream to what actually broke it:
@@ -166,6 +183,17 @@ Panel twins can either share one set of rows across every environment, by passin
 ```python
 >>> twin.anomalies({"uk": uk_rows, "france": fr_rows})
 ```
+
+### Monitoring
+
+`anomalies` scans a batch of observations once. `monitor` watches a series over time instead: it tracks a system health score across every timestep, separates spikes from trends, and orders the alerts it raises causally so the one that explains the others comes first. Temporal and panel-temporal twins only.
+
+```python
+>>> twin.monitor(observed)          # watch rows you already have
+>>> twin.monitor(horizon=30)        # watch the twin's own forecast instead
+```
+
+It watches one or the other, so passing both is refused rather than silently ignoring one. `parent_tolerance_sigma=` sets how far a variable may sit from what its parents predict before it is called out rather than explained by them, `auto_rca=False` turns off diagnosing each alert as it is raised, and `target_fpr=`, `start_step=` and `end_step=` mean what they do on `anomalies`.
 
 ### When there is no verb for it
 
@@ -197,7 +225,7 @@ Point the trained model at rows and ask what it would take to change each one's 
 1  cust-221             None           NaN            0
 ```
 
-Static trained twins only; a non-variable column (like `customer` above) becomes the row label. `max_changes=` caps how much each counterfactual may touch, and `constraints=` locks variables the business cannot move.
+This is `best_action` per row rather than per twin: same counterfactual engine, but a dedicated batch endpoint that answers for a register of rows at once and labels each verdict. Static trained twins only; a non-variable column (like `customer` above) becomes the row label. `max_changes=` caps how much each counterfactual may touch, and `constraints=` locks variables the business cannot move.
 
 ## Sweeps
 

@@ -54,6 +54,18 @@ ANOMALY_TYPES = {
     "multi-environment-static": "static_panel_anomaly_detection",
     "multi-environment-temporal": "panel_anomaly_detection",
 }
+COUNTERFACTUAL_TYPES = {
+    "static": "counterfactual",
+    "temporal": "temporal_counterfactual",
+    "multi-environment-static": "panel_counterfactual",
+    "multi-environment-temporal": "panel_counterfactual",
+}
+HEALTH_MONITOR_TYPES = {
+    "temporal": "causal_health_monitor",
+    "multi-environment-temporal": "panel_causal_health_monitor",
+}
+MONITOR_SOURCES = {"observed", "forecast"}
+TEMPORAL_TARGET_KEYS = {"timestamp", "aggregation", "targetMode"}
 
 
 class Twin:
@@ -608,8 +620,10 @@ class Twin:
             confidence: Width of the prediction interval, as a probability.
             origin_timestamp: Anchor the forecast start (ms epoch). How a
                 backtest aligns a forecast against data the twin never saw.
-            aggregate: Panel twins: add a combined series across environments,
-                one of `sum`, `avg`, `min`, `max`.
+            aggregate: Panel twins: the statistic for the combined series
+                across environments, one of `sum`, `avg`, `min`, `max`. Every
+                panel forecast carries one; this picks how it is combined,
+                averaged by default.
             timeout: Seconds to wait for the run.
 
         Returns:
@@ -830,6 +844,106 @@ class Twin:
         scenario = self._anomaly_scenario(samples, environments, start_step, end_step, target_fpr)
         return self._run_scenario(scenario, timeout=timeout)
 
+    def best_action(
+        self,
+        targets: list[dict[str, Any]],
+        rows: "pd.DataFrame | list[dict[str, Any]] | None" = None,
+        environments: list[str] | None = None,
+        max_changes: int = 3,
+        constraints: dict[str, Any] | None = None,
+        horizon: int | None = None,
+        *,
+        timeout: float = 3600.0,
+    ) -> SimulationResult:
+        """Reach a goal with the fewest changes: the smallest edit that lands the targets.
+
+        The counterpart to `optimise()`: that one pushes an objective as far as
+        it will go, this one asks what the least you can change is and still
+        arrive. Build the targets with `rc.target(...)`.
+
+        Args:
+            targets: The outcomes to reach, from `rc.target(...)` or plain
+                dicts keyed as the platform spells them.
+            rows: The baseline states to improve, one row per starting point.
+                Required on static twins, including multi-environment static
+                panels, where the same rows are solved in every environment.
+                Temporal twins solve from their own trajectory and take none.
+            environments: Panel twins: which environments to solve for.
+            max_changes: Most variables the solver may change per baseline.
+            constraints: Per-variable limits on what may change, and how far.
+            horizon: Temporal and panel-temporal twins: how many steps ahead
+                the solver may act over.
+            timeout: Seconds to wait for the run.
+
+        Returns:
+            A [`SimulationResult`](#simulationresult).
+
+        Raises:
+            RootCauseError: No targets, baseline rows on a twin with a time
+                axis, a static twin with no rows, `horizon` on a twin with no
+                time axis, or `environments` on a twin that is not a panel twin.
+
+        Examples:
+            >>> twin.best_action([rc.target("Churn", "No")], rows=at_risk)
+            >>> twin.best_action([rc.target("revenue", 1.2e6, match="orMore")], horizon=12)
+        """
+        scenario = self._best_action_scenario(targets, rows, environments, max_changes, constraints, horizon)
+        return self._run_scenario(scenario, timeout=timeout)
+
+    def monitor(
+        self,
+        samples: "pd.DataFrame | list[dict[str, Any]] | dict[str, list[dict[str, Any]]] | None" = None,
+        environments: list[str] | None = None,
+        horizon: int | None = None,
+        start_step: int | None = None,
+        end_step: int | None = None,
+        target_fpr: float = 0.005,
+        parent_tolerance_sigma: float = 0.5,
+        auto_rca: bool = True,
+        *,
+        timeout: float = 3600.0,
+    ) -> SimulationResult:
+        """Watch a series over time: spikes, trends, and what is brewing behind them.
+
+        Where `anomalies()` scans a batch of observations once, the monitor
+        tracks system health across every timestep and orders the alerts it
+        raises causally. Pass `samples` to monitor observed rows, or `horizon`
+        to monitor the twin's own forecast instead.
+
+        Args:
+            samples: The observations to monitor, in chronological order, as a
+                DataFrame, a list of dicts, or, on a panel twin, a
+                `{environment: rows}` mapping.
+            environments: Panel twins: which environments to monitor.
+            horizon: Monitor the twin's forecast this many steps ahead instead
+                of observed rows.
+            start_step: First step of the window to monitor.
+            end_step: Last step of the window to monitor.
+            target_fpr: Detection sensitivity, as a false-positive rate between
+                0.0001 and 0.1. Lower flags less.
+            parent_tolerance_sigma: How far a variable may sit from what its
+                parents predict, in standard deviations, before it is called out
+                rather than explained by them.
+            auto_rca: Diagnose each alert as it is raised.
+            timeout: Seconds to wait for the run.
+
+        Returns:
+            A [`SimulationResult`](#simulationresult).
+
+        Raises:
+            RootCauseError: The twin has no time axis, neither `samples` nor
+                `horizon` was given, both were, or `environments` was passed for
+                a twin that is not a panel twin.
+
+        Examples:
+            >>> twin.monitor(observed_frame)
+            >>> twin.monitor(horizon=30)
+        """
+        scenario = self._monitor_scenario(
+            samples, environments, horizon, start_step, end_step, target_fpr, parent_tolerance_sigma, auto_rca
+        )
+        return self._run_scenario(scenario, timeout=timeout)
+
     def _intervention_scenario(
         self,
         do: dict[str, Any],
@@ -1037,6 +1151,111 @@ class Twin:
                 f'start_step= and end_step= only apply to temporal twins; "{self.name}" is {self.kind} and '
                 "its rows carry no time axis"
             )
+        if start_step is not None:
+            scenario["startStep"] = start_step
+        if end_step is not None:
+            scenario["endStep"] = end_step
+        if self.is_panel:
+            scenario["environments"] = environments
+        return scenario
+
+    def _best_action_scenario(
+        self,
+        targets: list[dict[str, Any]],
+        rows: Any,
+        environments: list[str] | None,
+        max_changes: int,
+        constraints: dict[str, Any] | None,
+        horizon: int | None,
+    ) -> dict[str, Any]:
+        if not targets:
+            raise RootCauseError(
+                "best_action() needs at least one target to reach: "
+                "targets=[rc.target('Churn', 'No')]"
+            )
+        for entry in targets:
+            if not isinstance(entry, dict) or not entry.get("variable"):
+                raise RootCauseError(
+                    f"Every target needs the variable it wants to move; build them with rc.target(...). Got: {entry!r}"
+                )
+        self._reject_environments(environments)
+        if not self.is_temporal:
+            timed = sorted({key for entry in targets for key in entry if key in TEMPORAL_TARGET_KEYS})
+            if timed:
+                raise RootCauseError(
+                    f'{", ".join(timed)} on a target only applies to temporal twins; "{self.name}" is '
+                    f"{self.kind} and reaches its targets in a single period"
+                )
+        scenario_type = self._scenario_type(COUNTERFACTUAL_TYPES, "best action")
+        scenario: dict[str, Any] = {
+            "type": scenario_type,
+            "targets": list(targets),
+            "maxChanges": _guard.positive(max_changes, "max_changes"),
+        }
+        if self.is_temporal:
+            if rows is not None:
+                raise RootCauseError(
+                    f'rows= does not apply to "{self.name}"; a {self.kind} twin solves from its own '
+                    "trajectory, so say when a target has to be met with rc.target(..., at=timestamp) instead"
+                )
+        elif rows is None:
+            raise RootCauseError(
+                f'"{self.name}" is a {self.kind} twin, so best_action() needs rows=: the baseline states to '
+                "improve, one row per starting point"
+            )
+        else:
+            scenario["samples"] = _guard.records(rows, "rows")
+        if horizon is not None:
+            if not self.is_temporal:
+                raise RootCauseError(
+                    f'horizon= only applies to temporal twins; "{self.name}" is {self.kind} and reaches its '
+                    "targets in a single period"
+                )
+            scenario["forecastHorizon"] = _guard.positive(horizon, "horizon")
+        if constraints:
+            scenario["constraints"] = constraints
+        if self.is_panel:
+            scenario["environments"] = environments
+        return scenario
+
+    def _monitor_scenario(
+        self,
+        samples: Any,
+        environments: list[str] | None,
+        horizon: int | None,
+        start_step: int | None,
+        end_step: int | None,
+        target_fpr: float,
+        parent_tolerance_sigma: float,
+        auto_rca: bool,
+    ) -> dict[str, Any]:
+        if not self.is_temporal:
+            raise RootCauseError(
+                f'"{self.name}" is a {self.kind} twin; the causal health monitor watches a series over time '
+                "and needs a temporal or panel-temporal twin. Use anomalies() to scan a batch of rows."
+            )
+        if samples is None and horizon is None:
+            raise RootCauseError(
+                "monitor() needs something to watch: pass samples= to monitor observed rows, or horizon= to "
+                "monitor the twin's own forecast"
+            )
+        if samples is not None and horizon is not None:
+            raise RootCauseError(
+                "monitor() watches one or the other: samples= for observed rows, horizon= for the twin's "
+                "forecast. Drop whichever you did not mean"
+            )
+        self._reject_environments(environments)
+        scenario: dict[str, Any] = {
+            "type": self._scenario_type(HEALTH_MONITOR_TYPES, "causal health monitor"),
+            "dataSource": "observed" if samples is not None else "forecast",
+            "targetFpr": _guard.bounded(target_fpr, "target_fpr", 0.0001, 0.1),
+            "parentToleranceSigma": parent_tolerance_sigma,
+            "autoRca": bool(auto_rca),
+        }
+        if samples is not None:
+            scenario.update(self._scenario_samples(samples))
+        else:
+            scenario["forecastHorizon"] = _guard.positive(horizon, "horizon")
         if start_step is not None:
             scenario["startStep"] = start_step
         if end_step is not None:
@@ -1705,6 +1924,38 @@ class EnvSubset:
             target_fpr=target_fpr, timeout=timeout,
         )
 
+    def best_action(
+        self,
+        targets: list[dict[str, Any]],
+        max_changes: int = 3,
+        constraints: dict[str, Any] | None = None,
+        horizon: int | None = None,
+        *,
+        timeout: float = 3600.0,
+    ) -> SimulationResult:
+        return self.twin.best_action(
+            targets, environments=self._names(), max_changes=max_changes,
+            constraints=constraints, horizon=horizon, timeout=timeout,
+        )
+
+    def monitor(
+        self,
+        samples: "pd.DataFrame | list[dict[str, Any]] | dict[str, list[dict[str, Any]]] | None" = None,
+        horizon: int | None = None,
+        start_step: int | None = None,
+        end_step: int | None = None,
+        target_fpr: float = 0.005,
+        parent_tolerance_sigma: float = 0.5,
+        auto_rca: bool = True,
+        *,
+        timeout: float = 3600.0,
+    ) -> SimulationResult:
+        return self.twin.monitor(
+            samples, environments=self._names(), horizon=horizon, start_step=start_step,
+            end_step=end_step, target_fpr=target_fpr,
+            parent_tolerance_sigma=parent_tolerance_sigma, auto_rca=auto_rca, timeout=timeout,
+        )
+
     def __repr__(self) -> str:
         if self._stat_filters is not None:
             if self._resolved is not None:
@@ -1956,6 +2207,35 @@ class Group(EnvSubset):
         timeout: float = 3600.0,
     ) -> SimulationResult:
         scenario = self.twin._anomaly_scenario(samples, None, start_step, end_step, target_fpr)
+        return self.twin._run_scenario(scenario, timeout=timeout, environment_group_ids=[self.id])
+
+    def best_action(
+        self,
+        targets: list[dict[str, Any]],
+        max_changes: int = 3,
+        constraints: dict[str, Any] | None = None,
+        horizon: int | None = None,
+        *,
+        timeout: float = 3600.0,
+    ) -> SimulationResult:
+        scenario = self.twin._best_action_scenario(targets, None, None, max_changes, constraints, horizon)
+        return self.twin._run_scenario(scenario, timeout=timeout, environment_group_ids=[self.id])
+
+    def monitor(
+        self,
+        samples: "pd.DataFrame | list[dict[str, Any]] | dict[str, list[dict[str, Any]]] | None" = None,
+        horizon: int | None = None,
+        start_step: int | None = None,
+        end_step: int | None = None,
+        target_fpr: float = 0.005,
+        parent_tolerance_sigma: float = 0.5,
+        auto_rca: bool = True,
+        *,
+        timeout: float = 3600.0,
+    ) -> SimulationResult:
+        scenario = self.twin._monitor_scenario(
+            samples, None, horizon, start_step, end_step, target_fpr, parent_tolerance_sigma, auto_rca
+        )
         return self.twin._run_scenario(scenario, timeout=timeout, environment_group_ids=[self.id])
 
     def link(self) -> "Any":

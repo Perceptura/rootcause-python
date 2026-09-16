@@ -197,8 +197,9 @@ def test_twin_source_is_none_for_dataset_backed_versions(api, transport):
 
 
 def test_source_extend_sends_parquet_rows(api, transport):
-    import pyarrow.parquet as pq
     from io import BytesIO
+
+    import pyarrow.parquet as pq
 
     from rootcause.workspace import Source
 
