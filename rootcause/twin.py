@@ -355,7 +355,9 @@ class Twin:
         rather than failing — `committed`, `up_to_date`, or `retrain_required`
         (the model can't take these rows incrementally; result.reasons says
         why — call retrain()). Static and temporal twins assimilate out of the
-        box; panel twins need the v2 panel engine. Requires a trained version;
+        box. Among panel twins only multi-environment-temporal ones assimilate,
+        and only on the v2 panel engine; a multi-environment-static twin never
+        assimilates and always needs a retrain. Requires a trained version;
         extend or sync the source first so there is something new.
 
         Args:
