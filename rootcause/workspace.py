@@ -126,12 +126,17 @@ class Source:
     def direct_query(self) -> dict[str, Any] | None:
         """The settings a direct-query source is read with, or `None` where it is a snapshot.
 
-        `orderingColumn` is what the rows are paged by; `relation` is the remote relation or
-        location being read; `statementTimeoutSeconds` and `maxRowsScanned` are the caps a wide
-        query has to stay inside.
+        `orderingColumn` is what the rows are paged by, and `statementTimeoutSeconds` and
+        `maxRowsScanned` are the caps a wide query has to stay inside.
         """
         settings = self.doc.get("directQuery")
         return dict(settings) if isinstance(settings, dict) else None
+
+    @property
+    def dropped_columns(self) -> list[dict[str, str]]:
+        """Columns the remote has that this source does not, because the platform has no type for
+        them. Only ever non-empty on a source just created over an object store."""
+        return list(self.doc.get("droppedColumns") or [])
 
     def _path(self) -> str:
         return f"/api/v1/workspaces/{self._workspace_id}/sources/{self.id}"
@@ -236,15 +241,6 @@ class Dataset:
 
     def __repr__(self) -> str:
         return f"Dataset({self.name!r}, id={self.id})"
-
-
-_DIRECT_QUERY_SETTINGS = frozenset({
-    "append_only",
-    "statement_timeout_seconds",
-    "max_rows_scanned",
-    "relation",
-    "parent_id",
-})
 
 
 class Connector:
@@ -352,7 +348,14 @@ class Connector:
         *,
         ordering_column: str,
         name: str | None = None,
-        **settings: Any,
+        database: str | None = None,
+        schema: str | None = None,
+        warehouse: str | None = None,
+        append_only: bool = False,
+        statement_timeout_seconds: int | None = None,
+        max_rows_scanned: int | None = None,
+        relation: str | None = None,
+        parent_id: str | None = None,
     ) -> Source:
         """Read one table where it lives instead of importing a copy of it.
 
@@ -370,9 +373,14 @@ class Connector:
                 non-null: rows are paged straight from the remote, and without a stable sort the
                 same row can appear on two pages or none.
             name: Name for the new source. Derived from the table when omitted.
-            **settings: Connector config overrides such as `database=`, `schema=`,
-                `warehouse=`, and the direct-query settings `append_only`,
-                `statement_timeout_seconds`, `max_rows_scanned`, `relation` and `parent_id`.
+            database: Database the table is in, where it is not the connector's own.
+            schema: Schema the table is in (PostgreSQL and Snowflake).
+            warehouse: Warehouse to run against (Snowflake).
+            append_only: Declare that rows are only ever added, never updated or deleted.
+            statement_timeout_seconds: Cap on how long one remote statement may run.
+            max_rows_scanned: Cap on how many rows one remote statement may scan.
+            relation: Relation to read, where it is not `table`.
+            parent_id: Folder to create the source under.
 
         Returns:
             The new [`Source`](#source), already queryable.
@@ -380,13 +388,27 @@ class Connector:
         Raises:
             RootCauseError: The connector cannot be queried directly, or the settings are ones a
                 direct query cannot honour. The reason says which.
+            TypeError: An argument this does not take. Every setting is named here rather than
+                swept into the connector selection, because one that reached the selection would
+                be accepted by the API, ignored, and leave a source with no cap and no complaint.
         """
-        config = {key: value for key, value in settings.items() if key not in _DIRECT_QUERY_SETTINGS}
+        selection: dict[str, Any] = {"table": table}
+        if database is not None:
+            selection["database"] = database
+        if schema is not None:
+            selection["schema"] = schema
+        if warehouse is not None:
+            selection["warehouse"] = warehouse
+
         return self.create_direct_query_source(
-            {"table": table, **config},
+            selection,
             ordering_column=ordering_column,
             name=name or table,
-            **{key: value for key, value in settings.items() if key in _DIRECT_QUERY_SETTINGS},
+            append_only=append_only,
+            statement_timeout_seconds=statement_timeout_seconds,
+            max_rows_scanned=max_rows_scanned,
+            relation=relation,
+            parent_id=parent_id,
         )
 
     def create_direct_query_source(

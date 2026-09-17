@@ -19,7 +19,6 @@ FEDERATED_DOC = {
     "readMode": "direct_query",
     "directQuery": {
         "orderingColumn": "ts",
-        "relation": "daq.readings_1h",
         "appendOnly": True,
         "statementTimeoutSeconds": 30,
         "maxRowsScanned": None,
@@ -103,7 +102,7 @@ def test_a_storage_source_is_pointed_at_a_path_through_the_raw_verb(api, transpo
     )
 
     assert api.body_of("POST", "/direct-query")["config"] == {"path": "lake/readings"}
-    assert source.doc["droppedColumns"] == [{"field": "blob", "type": "VARIANT"}]
+    assert source.dropped_columns == [{"field": "blob", "type": "VARIANT"}]
 
 
 def test_a_connector_that_cannot_be_queried_directly_says_so(api, transport):
@@ -124,3 +123,57 @@ def test_a_response_with_no_source_id_is_not_reported_as_success(api, transport)
 
     with pytest.raises(RootCauseError):
         _connector(transport).direct_query_table("readings_1h", ordering_column="ts")
+
+
+def test_every_direct_query_setting_reaches_the_request_body(api, transport):
+    api.on("POST", "/api/v1/connectors/conn1/direct-query", {"data": {"sourceId": "src1"}}, status=201)
+    api.on("GET", f"/api/v1/workspaces/{WS}/sources/src1", {"data": FEDERATED_DOC})
+
+    _connector(transport).direct_query_table(
+        "readings_1h",
+        ordering_column="ts",
+        append_only=True,
+        statement_timeout_seconds=30,
+        max_rows_scanned=1_000_000,
+        relation="daq.readings_1h",
+        parent_id="folder1",
+    )
+
+    body = api.body_of("POST", "/direct-query")
+    assert body["appendOnly"] is True
+    assert body["statementTimeoutSeconds"] == 30
+    assert body["maxRowsScanned"] == 1_000_000
+    assert body["relation"] == "daq.readings_1h"
+    assert body["parentId"] == "folder1"
+    assert body["config"] == {"table": "readings_1h"}
+
+
+def test_a_misspelt_setting_is_refused_rather_than_sent_as_a_connector_override(transport):
+    """The failure that has no symptom: a setting that lands inside `config` is accepted by the
+    route, ignored by the backend, and the source comes back with no cap and no complaint."""
+    with pytest.raises(TypeError):
+        _connector(transport).direct_query_table(
+            "readings_1h", ordering_column="ts", statement_timeout=30,
+        )
+
+    with pytest.raises(TypeError):
+        _connector(transport).direct_query_table(
+            "readings_1h", ordering_column="ts", statementTimeoutSeconds=30,
+        )
+
+
+def test_an_omitted_setting_is_left_out_of_the_body_rather_than_sent_as_null(api, transport):
+    api.on("POST", "/api/v1/connectors/conn1/direct-query", {"data": {"sourceId": "src1"}}, status=201)
+    api.on("GET", f"/api/v1/workspaces/{WS}/sources/src1", {"data": FEDERATED_DOC})
+
+    _connector(transport).direct_query_table("readings_1h", ordering_column="ts")
+
+    body = api.body_of("POST", "/direct-query")
+    assert "statementTimeoutSeconds" not in body
+    assert "maxRowsScanned" not in body
+    assert "relation" not in body
+    assert "parentId" not in body
+
+
+def test_a_source_with_no_dropped_columns_answers_with_an_empty_list(transport):
+    assert Source(transport, WS, dict(SNAPSHOT_DOC)).dropped_columns == []

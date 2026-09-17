@@ -84,7 +84,6 @@ An import copies the rows, so the source is only as current as its last sync. `d
 'direct_query'
 >>> live.direct_query
 {'orderingColumn': 'week',
- 'relation': None,
  'appendOnly': False,
  'statementTimeoutSeconds': None,
  'maxRowsScanned': None}
@@ -109,7 +108,7 @@ Which to reach for:
 | Shaping | Any SQL you can write | A table; filter it in the workspace |
 | Connectors | All of them | PostgreSQL, MySQL, Snowflake, ClickHouse, S3, Google Cloud Storage, Azure Data Lake |
 
-Cap what a single remote statement may do with `statement_timeout_seconds=` and `max_rows_scanned=`, and declare `append_only=True` where the source's rows are only ever added — that is what lets a twin pin its training window by watermark instead of copying the rows. Storage connectors are pointed at a path rather than a table, through the raw verb:
+Cap what a single remote statement may do with `statement_timeout_seconds=` and `max_rows_scanned=`, and declare `append_only=True` where the source's rows are only ever added — that is what lets a twin pin its training window by watermark instead of copying the rows. Every setting is a named argument, so a misspelt one is a `TypeError` rather than a source that quietly has no cap. Storage connectors are pointed at a path rather than a table, through the raw verb:
 
 ```python
 >>> lake.create_direct_query_source(
