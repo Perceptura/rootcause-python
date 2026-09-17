@@ -113,18 +113,24 @@ class Source:
 
     @property
     def read_mode(self) -> str:
-        """How this source is read: `"direct_query"` or `"snapshot"`.
+        """How this source is read: `"direct_query"`, `"snapshot"`, or `"unknown"`.
 
         A direct-query source is read from its origin database on every query, so its rows are
         always current, every read costs a remote scan subject to that database's statement
         timeout, and no row count is recorded. A snapshot is a stored copy, which changes only
         when it is synced.
+
+        `"unknown"` means the platform did not say. Direct query predates the field, so a server
+        that does not send it can still hold sources of either kind, and calling those snapshots
+        would be a guess that is wrong exactly where it matters.
         """
-        return str(self.doc.get("readMode", "snapshot"))
+        mode = self.doc.get("readMode")
+        return str(mode) if mode else "unknown"
 
     @property
     def direct_query(self) -> dict[str, Any] | None:
-        """The settings a direct-query source is read with, or `None` where it is a snapshot.
+        """The settings a direct-query source is read with, or `None` where it is a snapshot or
+        the platform did not say — check [`read_mode`](#read_mode) to tell those two apart.
 
         `orderingColumn` is what the rows are paged by, and `statementTimeoutSeconds` and
         `maxRowsScanned` are the caps a wide query has to stay inside.
@@ -443,8 +449,10 @@ class Connector:
             parent_id: Folder to create the source under; omitted files it at the workspace root.
 
         Returns:
-            The new [`Source`](#source). Columns the remote has that the platform has no type
-            for are left out, and listed on the source's `droppedColumns`.
+            The new [`Source`](#source). Its `read_mode` is `"direct_query"` even against a
+            platform too old to report the field back — this call asked for that mode, so it
+            does not have to be told. Columns the remote has that the platform has no type for
+            are left out, and listed on [`dropped_columns`](#dropped_columns).
         """
         body: dict[str, Any] = {
             "workspaceId": self._workspace_id,
@@ -474,6 +482,14 @@ class Connector:
         )
         source = Source(self._transport, self._workspace_id, dict(doc.get("data", doc)))
         source.doc["droppedColumns"] = list(created.get("droppedColumns") or []) if isinstance(created, dict) else []
+
+        source.doc.setdefault("readMode", "direct_query")
+        source.doc.setdefault("directQuery", {
+            "orderingColumn": ordering_column,
+            "appendOnly": append_only,
+            "statementTimeoutSeconds": statement_timeout_seconds,
+            "maxRowsScanned": max_rows_scanned,
+        })
         return source
 
     def run_import(self, config: dict[str, Any], *, dataset_name: str | None = None, timeout: float = 3600.0) -> Source:

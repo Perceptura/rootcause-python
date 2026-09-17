@@ -98,6 +98,8 @@ Every source says which kind it is, so the choice is one you can check rather th
 [('store-weeks', 'snapshot'), ('store-weeks-live', 'direct_query')]
 ```
 
+A platform too old to report the field answers `'unknown'` rather than guessing — direct query is older than the field, so such a server can hold sources of either kind. A source you created with `direct_query_table()` is never `'unknown'`: that call asked for the mode, so it does not need to be told.
+
 Which to reach for:
 
 | | `import_table` / `import_query` | `direct_query_table` |

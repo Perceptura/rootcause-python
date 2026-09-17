@@ -48,8 +48,46 @@ def test_an_imported_source_is_a_snapshot_with_no_direct_query_settings(transpor
     assert source.direct_query is None
 
 
-def test_a_source_from_an_older_platform_reads_as_a_snapshot_rather_than_unknown(transport):
-    assert Source(transport, WS, {"id": "src3", "name": "legacy"}).read_mode == "snapshot"
+def test_a_source_the_platform_did_not_describe_is_unknown_rather_than_guessed(transport):
+    """Direct query predates these fields, and the REST route that creates one predates them too,
+    so a server that does not send readMode can still hold sources of either kind. Calling those
+    snapshots would be a guess that is wrong exactly where a caller would act on it."""
+    legacy = Source(transport, WS, {"id": "src3", "name": "legacy"})
+
+    assert legacy.read_mode == "unknown"
+    assert legacy.direct_query is None
+
+
+def test_a_source_just_created_is_not_mislabelled_by_a_platform_that_cannot_describe_it(api, transport):
+    """The failure this guards: /connectors/{id}/direct-query has been on the platform for a
+    while, but the source GET only learned to report readMode later. Between those two, creating
+    a federated source and reading it straight back said "snapshot" about a source this very call
+    had just asked to be federated."""
+    api.on("POST", "/api/v1/connectors/conn1/direct-query", {"data": {"sourceId": "src1"}}, status=201)
+    api.on("GET", f"/api/v1/workspaces/{WS}/sources/src1", {"data": {"id": "src1", "name": "readings"}})
+
+    source = _connector(transport).direct_query_table(
+        "readings_1h", ordering_column="ts", statement_timeout_seconds=30,
+    )
+
+    assert source.read_mode == "direct_query"
+    assert source.direct_query == {
+        "orderingColumn": "ts",
+        "appendOnly": False,
+        "statementTimeoutSeconds": 30,
+        "maxRowsScanned": None,
+    }
+
+
+def test_what_the_platform_does_say_wins_over_what_this_call_asked_for(api, transport):
+    """Creation can settle an ordering column the caller left to it, so the server's answer is
+    the authority wherever it gives one."""
+    api.on("POST", "/api/v1/connectors/conn1/direct-query", {"data": {"sourceId": "src1"}}, status=201)
+    api.on("GET", f"/api/v1/workspaces/{WS}/sources/src1", {"data": FEDERATED_DOC})
+
+    source = _connector(transport).direct_query_table("readings_1h", ordering_column="ts")
+
+    assert source.direct_query == FEDERATED_DOC["directQuery"]
 
 
 def test_direct_query_table_creates_the_source_and_hands_it_back_queryable(api, transport):
