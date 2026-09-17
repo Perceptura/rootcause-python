@@ -111,6 +111,28 @@ class Source:
     def name(self) -> str:
         return str(self.doc.get("name", self.id))
 
+    @property
+    def read_mode(self) -> str:
+        """How this source is read: `"direct_query"` or `"snapshot"`.
+
+        A direct-query source is read from its origin database on every query, so its rows are
+        always current, every read costs a remote scan subject to that database's statement
+        timeout, and no row count is recorded. A snapshot is a stored copy, which changes only
+        when it is synced.
+        """
+        return str(self.doc.get("readMode", "snapshot"))
+
+    @property
+    def direct_query(self) -> dict[str, Any] | None:
+        """The settings a direct-query source is read with, or `None` where it is a snapshot.
+
+        `orderingColumn` is what the rows are paged by; `relation` is the remote relation or
+        location being read; `statementTimeoutSeconds` and `maxRowsScanned` are the caps a wide
+        query has to stay inside.
+        """
+        settings = self.doc.get("directQuery")
+        return dict(settings) if isinstance(settings, dict) else None
+
     def _path(self) -> str:
         return f"/api/v1/workspaces/{self._workspace_id}/sources/{self.id}"
 
@@ -216,6 +238,15 @@ class Dataset:
         return f"Dataset({self.name!r}, id={self.id})"
 
 
+_DIRECT_QUERY_SETTINGS = frozenset({
+    "append_only",
+    "statement_timeout_seconds",
+    "max_rows_scanned",
+    "relation",
+    "parent_id",
+})
+
+
 class Connector:
     """An organisation-level connector to an external system (Snowflake, S3, …)."""
 
@@ -314,6 +345,114 @@ class Connector:
             The new [`Source`](#source).
         """
         return self.run_import({"query": query, **config}, dataset_name=name, timeout=timeout)
+
+    def direct_query_table(
+        self,
+        table: str,
+        *,
+        ordering_column: str,
+        name: str | None = None,
+        **settings: Any,
+    ) -> Source:
+        """Read one table where it lives instead of importing a copy of it.
+
+        The source is created from the remote's catalogue rather than ingested, so this returns
+        at once and there is no job to wait on — but every query against it then runs against
+        the origin database and is subject to its statement timeout. Import instead when the
+        data must be stable and queried repeatedly and cheaply.
+
+        Supported on PostgreSQL, MySQL, Snowflake and ClickHouse; storage connectors are pointed
+        at a path, so use [`create_direct_query_source`](#create_direct_query_source) for those.
+
+        Args:
+            table: Table to read.
+            ordering_column: Column the rows are paged by. Required, and it should be unique and
+                non-null: rows are paged straight from the remote, and without a stable sort the
+                same row can appear on two pages or none.
+            name: Name for the new source. Derived from the table when omitted.
+            **settings: Connector config overrides such as `database=`, `schema=`,
+                `warehouse=`, and the direct-query settings `append_only`,
+                `statement_timeout_seconds`, `max_rows_scanned`, `relation` and `parent_id`.
+
+        Returns:
+            The new [`Source`](#source), already queryable.
+
+        Raises:
+            RootCauseError: The connector cannot be queried directly, or the settings are ones a
+                direct query cannot honour. The reason says which.
+        """
+        config = {key: value for key, value in settings.items() if key not in _DIRECT_QUERY_SETTINGS}
+        return self.create_direct_query_source(
+            {"table": table, **config},
+            ordering_column=ordering_column,
+            name=name or table,
+            **{key: value for key, value in settings.items() if key in _DIRECT_QUERY_SETTINGS},
+        )
+
+    def create_direct_query_source(
+        self,
+        config: dict[str, Any],
+        *,
+        ordering_column: str,
+        name: str,
+        append_only: bool = False,
+        statement_timeout_seconds: int | None = None,
+        max_rows_scanned: int | None = None,
+        relation: str | None = None,
+        parent_id: str | None = None,
+    ) -> Source:
+        """Create a directly-queried source from a raw, connector-specific selection.
+
+        The escape hatch under [`direct_query_table`](#direct_query_table), and the way to point
+        a direct query at a storage connector: `{"path": "lake/readings"}` for S3, Google Cloud
+        Storage and Azure Data Lake, which are read in place as Parquet.
+
+        Args:
+            config: The connector's own selection payload.
+            ordering_column: Column the rows are paged by.
+            name: Name for the new source.
+            append_only: Declare that rows are only ever added, never updated or deleted. Lets a
+                digital twin pin its training window by watermark instead of copying the rows.
+            statement_timeout_seconds: Cap on how long one remote statement may run.
+            max_rows_scanned: Cap on how many rows one remote statement may scan. SQL connectors
+                only — a row cap has no file analogue, so storage connectors refuse it.
+            relation: Relation to read, where it is not the config's table or resolved from the
+                bucket and path.
+            parent_id: Folder to create the source under; omitted files it at the workspace root.
+
+        Returns:
+            The new [`Source`](#source). Columns the remote has that the platform has no type
+            for are left out, and listed on the source's `droppedColumns`.
+        """
+        body: dict[str, Any] = {
+            "workspaceId": self._workspace_id,
+            "datasetName": name,
+            "config": config,
+            "orderingColumn": ordering_column,
+            "appendOnly": append_only,
+        }
+        if statement_timeout_seconds is not None:
+            body["statementTimeoutSeconds"] = statement_timeout_seconds
+        if max_rows_scanned is not None:
+            body["maxRowsScanned"] = max_rows_scanned
+        if relation is not None:
+            body["relation"] = relation
+        if parent_id is not None:
+            body["parentId"] = parent_id
+
+        envelope = self._transport.request(
+            "POST",
+            f"/api/v1/connectors/{self.id}/direct-query",
+            json_body=body,
+        )
+        created = envelope.get("data", envelope)
+        source_id = expect(envelope, "sourceId", "directly-queried source")
+        doc = self._transport.request(
+            "GET", f"/api/v1/workspaces/{self._workspace_id}/sources/{source_id}"
+        )
+        source = Source(self._transport, self._workspace_id, dict(doc.get("data", doc)))
+        source.doc["droppedColumns"] = list(created.get("droppedColumns") or []) if isinstance(created, dict) else []
+        return source
 
     def run_import(self, config: dict[str, Any], *, dataset_name: str | None = None, timeout: float = 3600.0) -> Source:
         """Import with a raw, connector-specific payload.
