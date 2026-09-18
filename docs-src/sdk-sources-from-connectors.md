@@ -72,6 +72,55 @@ The same SQL, minus the safety net: `import_query()` materialises the full resul
 4   emea 2024-01-29            28.18     192.5         70.7    373.6
 ```
 
+## Or read it where it lives
+
+An import copies the rows, so the source is only as current as its last sync. `direct_query_table()` makes a source that is read from the origin database on every query instead: nothing is ingested, the schema is probed from the remote's catalogue, and the source is queryable the moment the call returns.
+
+```python
+>>> live = connector.direct_query_table(
+...     "store_weeks", ordering_column="week", name="store-weeks-live", schema="public",
+... )
+>>> live.read_mode
+'direct_query'
+>>> live.direct_query
+{'orderingColumn': 'week',
+ 'appendOnly': False,
+ 'statementTimeoutSeconds': None,
+ 'maxRowsScanned': None}
+```
+
+`ordering_column` is required, and it should be unique and non-null. Rows are paged straight from the remote, and without a stable sort the same row can appear on two pages or none.
+
+Every source says which kind it is, so the choice is one you can check rather than infer:
+
+```python
+>>> [(s.name, s.read_mode) for s in ws.sources]
+[('store-weeks', 'snapshot'), ('store-weeks-live', 'direct_query')]
+```
+
+A platform too old to report the field answers `'unknown'` rather than guessing — direct query is older than the field, so such a server can hold sources of either kind. A source you created with `direct_query_table()` is never `'unknown'`: that call asked for the mode, so it does not need to be told.
+
+Which to reach for:
+
+| | `import_table` / `import_query` | `direct_query_table` |
+|---|---|---|
+| Rows | A stored copy, as old as its last sync | Always current |
+| Cost of a query | Local, and the same every time | A scan of the remote, bounded by its statement timeout |
+| Row count | Recorded | Not recorded — nothing counts the remote |
+| Shaping | Any SQL you can write | A table; filter it in the workspace |
+| Connectors | All of them | PostgreSQL, MySQL, Snowflake, ClickHouse, S3, Google Cloud Storage, Azure Data Lake |
+
+Cap what a single remote statement may do with `statement_timeout_seconds=` and `max_rows_scanned=`, and declare `append_only=True` where the source's rows are only ever added — that is what lets a twin pin its training window by watermark instead of copying the rows. Every setting is a named argument, so a misspelt one is a `TypeError` rather than a source that quietly has no cap. Storage connectors are pointed at a path rather than a table, through the raw verb:
+
+```python
+>>> lake.create_direct_query_source(
+...     {"path": "telemetry/readings"}, ordering_column="ts", name="readings",
+... )
+Source('readings', id=Kf2pQ...)
+```
+
+Over REST this is `POST /connectors/{id}/direct-query`, and over MCP it is `create_direct_query_source`.
+
 ## Straight to a causal model
 
 A source-backed twin, discovery + training in one pass, and a question:
