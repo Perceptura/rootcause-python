@@ -2,6 +2,8 @@ include:
   - project: 'perceptura/dev-augmentation/clanker-flows'
     file: '/ci/docs-on-mr.yml'
     ref: main
+    rules:
+      - if: $DOCS_ON_MR == "true"
 
 stages:
   - generate
