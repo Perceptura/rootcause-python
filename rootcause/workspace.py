@@ -286,7 +286,11 @@ class Connector:
         return envelope.get("data", envelope)
 
     def query(self, query: str, *, limit: int = 100, **config: Any) -> "pd.DataFrame":
-        """Run a custom query against the external system and return sample rows.
+        """Run custom SQL against the connected database and return sample rows.
+
+        Takes SQL, so it works on PostgreSQL, MySQL, ClickHouse and Snowflake.
+        MongoDB selects a database and collection, and the storage connectors
+        select a path; on those use `import_table`.
 
         The authoring loop for custom SQL: nothing is stored, database errors
         come back verbatim.

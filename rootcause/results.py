@@ -178,7 +178,7 @@ class SimulationResult:
     def link(self) -> "Any":
         """This run's detail view on the platform, as a clickable URL.
 
-        Opens the parent twin's Simulate tab on exactly this run.
+        Opens the parent twin's simulations view on exactly this run.
         """
         from rootcause._links import workspace_link
 
