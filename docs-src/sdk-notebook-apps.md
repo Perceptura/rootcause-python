@@ -104,7 +104,7 @@ The typed verbs cover the twin consoles. For everything else, `rootcause.jupyter
 ```python
 from rootcause.jupyter import app
 
-app("get_source_preview", {"workspaceId": ws.id, "sourceId": source.id})
+app("browse_sources", {"workspaceId": ws.id, "path": source.id})
 app("check_background_runs", {"workspaceId": ws.id})
 ```
 
